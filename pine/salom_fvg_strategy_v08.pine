@@ -1,0 +1,301 @@
+//@version=6
+strategy("Salom FVG Model — v0.8 (Telegram)", overlay = true, max_boxes_count = 500, max_labels_count = 500, initial_capital = 10000, commission_type = strategy.commission.cash_per_contract, commission_value = 0, slippage = 0, pyramiding = 0, calc_on_every_tick = false, margin_long = 1, margin_short = 1, process_orders_on_close = true)
+
+// ───────── Asosiy sozlamalar ─────────
+G0 = "Asosiy"
+pivLen     = input.int(2, "Swing: chap/o'ng shamlar soni", minval = 1, group = G0)
+bodyLen    = input.int(20, "Impuls: o'rtacha tana davri", minval = 5, group = G0)
+impMult    = input.float(1.8, "Impuls: sham tanasi >= o'rtacha x", step = 0.1, group = G0)
+legAtr     = input.float(1.0, "Impuls: 3 shamlik harakat >= ATR x", step = 0.1, group = G0)
+fvgMinAtr  = input.float(0.3, "Katta FVG: minimal hajm (ATR x)", step = 0.05, group = G0)
+fvgMaxAge  = input.int(5, "Buzilishda FVG yoshi (sham)", minval = 1, group = G0)
+useHtf     = input.bool(false, "15m yo'nalish filtri", group = G0)
+htfTf      = input.timeframe("15", "Yo'nalish timeframe", group = G0)
+rr         = input.float(1.4, "TP (R)", step = 0.1, group = G0)
+riskUsd    = input.float(50, "Risk ($)", group = G0)
+slBuffer   = input.float(0.0, "SL bufer (punkt)", step = 0.1, group = G0)
+maxSlMult  = input.float(2.0, "SL o'rtachadan x katta bo'lsa o'tkazish", step = 0.1, group = G0)
+maxTrades  = input.int(5, "Kuniga maksimal bitim", minval = 1, group = G0)
+maxDayLossR = input.float(2.0, "Kunlik maksimal zarar (R)", step = 0.5, group = G0)
+stopSessAfterSL = input.bool(true, "SL'dan keyin shu sessiyada savdo yo'q", group = G0)
+
+// ───────── Salomning qoidalari ─────────
+G1 = "Qoidalar (misollardan)"
+useR1     = input.bool(false, "1: Kuchsiz buzilish darajani 'yeydi' (signal yo'q)", group = G1)
+useR3     = input.bool(false, "3: Harakat oxirida kirmaslik", group = G1)
+maxBosSeq = input.int(2, "   CHoCH'dan keyin nechanchi BOS'gacha kirish", minval = 1, group = G1)
+useR4     = input.bool(true, "4: Bitimdan keyin qaytish + yangi swing kutish", group = G1)
+pbAtr     = input.float(1.0, "   Qaytish chuqurligi (ATR x)", step = 0.1, group = G1)
+useR6     = input.bool(true, "6: Katta FVG'ga qaytishda teskari kirmaslik", group = G1)
+fvgLife   = input.int(48, "   FVG amal qilish muddati (sham)", minval = 1, group = G1)
+useR8     = input.bool(true, "8: Diapazonda faqat chegara buzilsa", group = G1)
+rangeBars = input.int(24, "   Diapazon davri (sham)", minval = 5, group = G1)
+rangeAtr  = input.float(4.0, "   Diapazon balandligi <= ATR(100) x", step = 0.5, group = G1)
+showSkip  = input.bool(false, "O'tkazilgan signallarni ko'rsatish (sabab bilan)", group = G1)
+
+// ───────── Telegram alert ─────────
+G2 = "Telegram signal"
+sendAlerts = input.bool(true, "Setup chiqqanda alert yuborish", group = G2)
+alertBars  = input.int(48, "Grafik uchun oxirgi shamlar soni", minval = 10, maxval = 80, group = G2)
+
+// ───────── Sessiyalar (NY vaqti) ─────────
+TZ = "America/New_York"
+hNY = hour(time, TZ)
+sessName = hNY >= 18 or hNY < 2 ? "Asia" : hNY < 8 ? "London" : hNY < 17 ? "NY" : "Yopiq"
+sessChanged = bar_index == 0 or sessName != sessName[1]
+var int sessId = 0
+if sessChanged
+    sessId += 1
+newDay = sessChanged and sessName == "Asia"
+
+// ───────── 15m yo'nalish ─────────
+f_trend() =>
+    var float swHi = na
+    var float swLo = na
+    var int tr = 0
+    ph = ta.pivothigh(high, pivLen, pivLen)
+    pl = ta.pivotlow(low, pivLen, pivLen)
+    b = math.abs(close - open)
+    avgB = ta.sma(b, bodyLen)
+    imp = b >= impMult * avgB
+    impAny = imp or imp[1]
+    if not na(ph)
+        swHi := ph
+    if not na(pl)
+        swLo := pl
+    if not na(swHi) and close > swHi and impAny
+        tr := 1
+        swHi := na
+    if not na(swLo) and close < swLo and impAny
+        tr := -1
+        swLo := na
+    tr
+htfTrend = request.security(syminfo.tickerid, htfTf, f_trend()[1], lookahead = barmerge.lookahead_on)
+
+// ───────── Impuls ─────────
+atr     = ta.atr(14)
+atrL    = ta.atr(100)
+body    = math.abs(close - open)
+avgBody = ta.sma(body, bodyLen)
+impBull = close > open and body >= impMult * avgBody
+impBear = close < open and body >= impMult * avgBody
+lo3 = ta.lowest(low, 3)
+hi3 = ta.highest(high, 3)
+strongUp = (impBull or impBull[1]) and close - lo3 >= legAtr * atr
+strongDn = (impBear or impBear[1]) and hi3 - close >= legAtr * atr
+lo10 = ta.lowest(low, 10)
+hi10 = ta.highest(high, 10)
+
+// ───────── Swinglar va buzilishlar ─────────
+ph = ta.pivothigh(high, pivLen, pivLen)
+pl = ta.pivotlow(low, pivLen, pivLen)
+var float swH = na
+var float swL = na
+var float lastPivH = na
+var float lastPivL = na
+if not na(ph)
+    swH := ph
+    lastPivH := ph
+if not na(pl)
+    swL := pl
+    lastPivL := pl
+
+bosUp = false
+bosDn = false
+if not na(swH) and close > swH
+    if strongUp
+        bosUp := true
+        swH := na
+    else if useR1
+        swH := na
+if not na(swL) and close < swL
+    if strongDn
+        bosDn := true
+        swL := na
+    else if useR1
+        swL := na
+
+// ───────── Katta FVG ─────────
+bullFvg = low > high[2] and (low - high[2]) >= fvgMinAtr * atr
+bearFvg = high < low[2] and (low[2] - high) >= fvgMinAtr * atr
+var float bullTop = na
+var float bullBot = na
+var int   bullBar = na
+var float bearTop = na
+var float bearBot = na
+var int   bearBar = na
+if bullFvg
+    bullTop := low
+    bullBot := high[2]
+    bullBar := bar_index
+if bearFvg
+    bearTop := low[2]
+    bearBot := high
+    bearBar := bar_index
+bullFvgOk = not na(bullBar) and bar_index - bullBar <= fvgMaxAge
+bearFvgOk = not na(bearBar) and bar_index - bearBar <= fvgMaxAge
+
+// ───────── 5m tuzilma: CHoCH / BOS ketma-ketligi (3-qoida) ─────────
+var int tr5 = 0
+var int bosCnt = 0
+sigUp = bosUp and bullFvgOk
+sigDn = bosDn and bearFvgOk
+if sigUp
+    bosCnt := tr5 == 1 ? bosCnt + 1 : 0
+    tr5 := 1
+if sigDn
+    bosCnt := tr5 == -1 ? bosCnt + 1 : 0
+    tr5 := -1
+
+// ───────── Faol katta FVG (6-qoida) ─────────
+var float actBearTop = na
+var int   actBearBar = na
+var float actBullBot = na
+var int   actBullBar = na
+if sigDn
+    actBearTop := bearTop
+    actBearBar := bar_index
+if sigUp
+    actBullBot := bullBot
+    actBullBar := bar_index
+if not na(actBearTop) and (close > actBearTop or bar_index - actBearBar > fvgLife)
+    actBearTop := na
+if not na(actBullBot) and (close < actBullBot or bar_index - actBullBar > fvgLife)
+    actBullBot := na
+
+// ───────── Diapazon (8-qoida) ─────────
+rngHi = ta.highest(high, rangeBars)[1]
+rngLo = ta.lowest(low, rangeBars)[1]
+inRange = rngHi - rngLo <= rangeAtr * atrL[1]
+
+// ───────── Bitim holati ─────────
+var int   tradesToday = 0
+var float dayR        = 0.0
+var int   blockedSess = -1
+var array<float> slHist = array.new<float>()
+var int   lastClosed = 0
+var float lastStop = na
+var float lastTp = na
+var int   wins = 0
+var int   losses = 0
+var int   exitDir = 0
+var int   exitBar = na
+var float extSinceExit = na
+var bool  reArmed = true
+
+if newDay
+    tradesToday := 0
+    dayR := 0.0
+
+if strategy.closedtrades > lastClosed
+    for i = lastClosed to strategy.closedtrades - 1
+        pr = strategy.closedtrades.profit(i)
+        eB = strategy.closedtrades.entry_bar_index(i)
+        xB = strategy.closedtrades.exit_bar_index(i)
+        eP = strategy.closedtrades.entry_price(i)
+        isLong = strategy.closedtrades.size(i) > 0
+        win = pr > 0
+        if win
+            wins += 1
+        else
+            losses += 1
+        rgt = math.max(xB, eB + 1)
+        box.new(eB, isLong ? lastTp : eP, rgt, isLong ? eP : lastTp, border_color = color.new(color.green, 40), bgcolor = color.new(color.green, 82))
+        box.new(eB, isLong ? eP : lastStop, rgt, isLong ? lastStop : eP, border_color = color.new(color.red, 40), bgcolor = color.new(color.red, 82))
+        label.new(rgt, win ? lastTp : lastStop, (isLong ? "LONG " : "SHORT ") + (win ? "✅ +$" + str.tostring(pr, "#") : "❌ -$" + str.tostring(math.abs(pr), "#")), style = (isLong == win) ? label.style_label_down : label.style_label_up, color = win ? color.green : color.red, textcolor = color.white, size = size.small)
+        dayR += pr / riskUsd
+        if pr < 0
+            blockedSess := sessId
+        exitDir := isLong ? 1 : -1
+        exitBar := xB
+        extSinceExit := isLong ? high : low
+        reArmed := false
+    lastClosed := strategy.closedtrades
+
+// 4-qoida: bitimdan keyin o'sha tomonga qayta kirish uchun qaytish + yangi swing
+if not reArmed
+    if exitDir == 1
+        extSinceExit := math.max(extSinceExit, high)
+        if not na(pl) and bar_index - pivLen > exitBar and extSinceExit - pl >= pbAtr * atr
+            reArmed := true
+    else
+        extSinceExit := math.min(extSinceExit, low)
+        if not na(ph) and bar_index - pivLen > exitBar and ph - extSinceExit >= pbAtr * atr
+            reArmed := true
+
+canTrade = sessName != "Yopiq" and tradesToday < maxTrades and dayR > -maxDayLossR and not (stopSessAfterSL and blockedSess == sessId)
+
+f_num(float x) =>
+    str.tostring(x, "#.##")
+
+// Telegram bot uchun JSON xabar: yo'nalish, kirish, SL, TP, hajm va oxirgi shamlar
+f_msg(int d, float e, float s, float t, float q) =>
+    string o = ""
+    string h = ""
+    string l = ""
+    string c = ""
+    n = math.min(alertBars, bar_index + 1)
+    for i = n - 1 to 0
+        sep = i == 0 ? "" : ","
+        o := o + f_num(open[i]) + sep
+        h := h + f_num(high[i]) + sep
+        l := l + f_num(low[i]) + sep
+        c := c + f_num(close[i]) + sep
+    '{"v":1,"symbol":"' + syminfo.ticker + '","tf_sec":' + str.tostring(timeframe.in_seconds()) + ',"side":"' + (d == 1 ? "BUY" : "SELL") + '","entry":' + f_num(e) + ',"sl":' + f_num(s) + ',"tp":' + f_num(t) + ',"qty":' + f_num(q) + ',"risk_usd":' + f_num(riskUsd) + ',"rr":' + f_num(rr) + ',"time":' + str.tostring(time) + ',"o":[' + o + '],"h":[' + h + '],"l":[' + l + '],"c":[' + c + ']}'
+
+f_skip(int d, string why) =>
+    if showSkip
+        label.new(bar_index, d == 1 ? low : high, why, style = d == 1 ? label.style_label_up : label.style_label_down, color = color.new(color.gray, 30), textcolor = color.white, size = size.tiny)
+
+if strategy.position_size == 0 and canTrade and (sigUp or sigDn)
+    d = sigUp ? 1 : -1
+    string why = ""
+    if useHtf and htfTrend != d
+        why := "15m teskari"
+    else if useR3 and bosCnt >= maxBosSeq
+        why := "3: harakat oxiri"
+    else if useR4 and not reArmed and exitDir == d
+        why := "4: qaytish yo'q"
+    else if useR6 and (d == 1 ? (not na(actBearTop) and close <= actBearTop) : (not na(actBullBot) and close >= actBullBot))
+        why := "6: FVG'ga qaytish"
+    else if useR8 and inRange and (d == 1 ? close <= rngHi : close >= rngLo)
+        why := "8: diapazon ichida"
+    if why != ""
+        f_skip(d, why)
+    else
+        entry = close
+        legExt = d == 1 ? math.min(nz(lastPivL, low), lo10) : math.max(nz(lastPivH, high), hi10)
+        stop = d == 1 ? legExt - slBuffer : legExt + slBuffer
+        risk = math.abs(entry - stop)
+        if risk > 0 and (d == 1 ? stop < entry : stop > entry)
+            avgSl = array.size(slHist) >= 5 ? array.avg(slHist) : na
+            tooBig = not na(avgSl) and risk > maxSlMult * avgSl
+            array.push(slHist, risk)
+            if array.size(slHist) > 20
+                array.shift(slHist)
+            if tooBig
+                f_skip(d, "SL juda katta")
+            else
+                q = riskUsd / (risk * syminfo.pointvalue)
+                lastStop := stop
+                lastTp := entry + d * rr * risk
+                strategy.entry("E", d == 1 ? strategy.long : strategy.short, qty = q)
+                strategy.exit("X", "E", stop = stop, limit = lastTp)
+                if sendAlerts
+                    alert(f_msg(d, entry, stop, lastTp, q), alert.freq_once_per_bar_close)
+                tradesToday += 1
+                reArmed := true
+
+// ───────── Statistika jadvali ─────────
+var table tb = table.new(position.top_right, 2, 5, bgcolor = color.new(color.black, 15), border_width = 1)
+n = wins + losses
+table.cell(tb, 0, 0, "Bitimlar", text_color = color.white)
+table.cell(tb, 1, 0, str.tostring(n), text_color = color.white)
+table.cell(tb, 0, 1, "TP / SL", text_color = color.white)
+table.cell(tb, 1, 1, str.tostring(wins) + " / " + str.tostring(losses), text_color = color.white)
+table.cell(tb, 0, 2, "Winrate", text_color = color.white)
+table.cell(tb, 1, 2, str.tostring(n > 0 ? 100.0 * wins / n : 0.0, "#.#") + "%", text_color = color.white)
+table.cell(tb, 0, 3, "Natija", text_color = color.white)
+table.cell(tb, 1, 3, "$" + str.tostring(strategy.netprofit, "#"), text_color = strategy.netprofit >= 0 ? color.lime : color.red)
+table.cell(tb, 0, 4, "Balans", text_color = color.white)
+table.cell(tb, 1, 4, "$" + str.tostring(strategy.initial_capital + strategy.netprofit, "#"), text_color = color.white)
