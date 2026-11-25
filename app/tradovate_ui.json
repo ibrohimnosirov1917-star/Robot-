@@ -1,0 +1,30 @@
+{
+  "_izoh": "Tradovate web'dagi tugma va maydonlar. Taxminiy qiymatlar — demo hisobda /login va /screen bilan sinab, aniq qiymatlar yoziladi va keyin calibrated=true qilinadi. calibrated=false bo'lsa bot haqiqiy bitim ochmaydi.",
+  "calibrated": false,
+  "login": {
+    "user": ["#name-input", "input[name='name']", "input[placeholder*='user' i]", "input[type='text']"],
+    "password": ["#password-input", "input[name='password']", "input[type='password']"],
+    "submit": ["button:has-text('Login')", "button:has-text('Log In')", "button[type='submit']"],
+    "code_input": ["input[autocomplete='one-time-code']", "input[name*='code' i]", "input[placeholder*='code' i]"],
+    "code_submit": ["button:has-text('Verify')", "button:has-text('Submit')", "button:has-text('Continue')"],
+    "env_select": ["button:has-text('Access Simulation')", "button:has-text('Simulation')"],
+    "captcha": ["iframe[src*='captcha']", "iframe[title*='challenge' i]"],
+    "ready": ["button:has-text('Exit at Mkt')", "button:has-text('Buy Mkt')"]
+  },
+  "price": [],
+  "order_steps": [
+    {"do": "fill", "what": "kontrakt (symbol) maydoni", "sel": ["input[placeholder*='symbol' i]"], "value": "{symbol}", "enter": true},
+    {"do": "fill", "what": "kontrakt soni (qty)", "sel": ["input[placeholder*='qty' i]"], "value": "{qty}"},
+    {"do": "fill", "what": "SL narxi", "sel": ["input[placeholder*='stop' i]"], "value": "{sl}"},
+    {"do": "fill", "what": "TP narxi", "sel": ["input[placeholder*='target' i]", "input[placeholder*='profit' i]"], "value": "{tp}"},
+    {"do": "click", "side": "BUY", "what": "Buy Mkt tugmasi", "sel": ["button:has-text('Buy Mkt')"], "submit": true},
+    {"do": "click", "side": "SELL", "what": "Sell Mkt tugmasi", "sel": ["button:has-text('Sell Mkt')"], "submit": true}
+  ],
+  "verify_steps": [
+    {"do": "wait", "what": "SL buyurtmasi ekranda", "sel": ["text={sl}"], "timeout_ms": 10000},
+    {"do": "wait", "what": "TP buyurtmasi ekranda", "sel": ["text={tp}"], "timeout_ms": 10000}
+  ],
+  "flatten_steps": [
+    {"do": "click", "what": "Exit at Mkt & Cxl tugmasi", "sel": ["button:has-text('Exit at Mkt')"]}
+  ]
+}

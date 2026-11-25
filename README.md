@@ -1,73 +1,88 @@
-# Salom FVG — Telegram signal bot
+# Salom FVG — Telegram signal bot (Tradeify / Tradovate)
 
-TradingView'dagi **Salom FVG Model v0.8** strategiyasi setup topganda Telegram'ga
-grafik rasmi, kirish / SL / TP / hajm bilan signal yuboradi. Ostida tugmalar bor:
+TradingView'dagi **Salom FVG Model v0.8** strategiyasi **MGC1!** grafigida setup topganda
+Telegram'ga grafik rasmi, kirish / SL / TP va **MGC kontrakt soni** bilan signal yuboradi:
 
-`🟢 BUY` · `🔴 SELL` · `⏭ O'tkazib yuborish` · `🔗 Vest`
+`🟢 Ruxsat: BUY 1 MGC` · `⏭ O'tkazib yuborish` · `📈 TradingView`
 
-Tugma bosilganda bot Vest GC-PERP'da kiritish uchun tayyor buyurtma ma'lumotini
-yuboradi (hajm, SL va TP masofasi). Vest prop hisoblarida API yo'q, shuning uchun
-hozircha bitim Vest'da qo'lda ochiladi (**manual** rejim).
+**Ruxsat** bosilsa, bot o'z brauzeri orqali Tradovate'ga (Tradeify hisobi) kirib bitimni
+**SL va TP bilan** ochadi va natijani skrinshot bilan yuboradi.
 
 ```
 TradingView alert ──webhook──▶ /tv/<WEBHOOK_SECRET> ──▶ Telegram (rasm + tugmalar)
-Telegram tugmasi  ──webhook──▶ /telegram           ──▶ buyurtma ma'lumoti
+Telegram "Ruxsat" ─webhook──▶ /telegram ──▶ bot brauzeri ──▶ Tradovate (Tradeify) ──▶ ✅ / ❌ xabar
 ```
 
-## Railway'ga joylash
+## Rejimlar (`EXECUTION_MODE`)
 
-1. **Railway** → *New Project* → *Deploy from GitHub repo* → shu repozitoriyni tanlang.
-   Railway `Dockerfile` orqali o'zi quradi.
-2. **Settings → Networking → Generate Domain** — masalan `robot-production.up.railway.app`.
-3. **Variables** bo'limiga qo'shing:
+| Rejim | Nima bo'ladi |
+|---|---|
+| `dry` (standart) | Bitim **ochilmaydi**. Bot qanday buyurtma yuborishini ko'rsatadi. |
+| `live` | Bot Tradovate'ga kirib bitimni o'zi ochadi. |
 
-   | O'zgaruvchi | Qiymat |
-   |---|---|
-   | `TELEGRAM_BOT_TOKEN` | @BotFather bergan token |
-   | `WEBHOOK_SECRET` | uzun tasodifiy satr (masalan 30+ harf/raqam) |
-   | `TELEGRAM_CHAT_ID` | keyingi qadamda olinadi |
+`live` rejimda ham `app/tradovate_ui.json` ichida `"calibrated": true` bo'lmaguncha bot
+haqiqiy bitim ochmaydi. Bu fayl Tradovate'ning **demo** hisobida sinab chiqilgandan keyin yoqiladi.
 
-4. Deploy tugagach, Telegram'da botingizga `/start` yozing — bot **chat ID**ni yuboradi.
-   Uni `TELEGRAM_CHAT_ID` ga kiriting (Railway qayta ishga tushiradi).
-5. Botga `/test` yozing — namunaviy signal (grafik + tugmalar) kelishi kerak.
+## Hajm va risk
 
-Tekshirish: brauzerda `https://<domeningiz>/` ochilsa `{"ok": true, ...}` chiqadi.
+MGC: 1 kontrakt = 10 oz, narx $1 yursa = $10.
+Kontrakt soni = `RISK_USD ÷ (SL punkt × 10)`, pastga yaxlitlanadi.
 
-## TradingView alert
+| SL | Kontrakt | Risk |
+|---|---|---|
+| 12 punkt | 2 MGC | $240 |
+| 23.6 punkt | 1 MGC | $236 |
+| 30 punkt | 1 MGC | $300 ⚠️ (signalda ogohlantirish) |
 
-1. Grafikka **Salom FVG Model — v0.8 (Telegram)** strategiyasini qo'shing (XAUUSD, 5m).
-2. **Alert** → *Condition*: shu strategiya → **alert() function calls only**.
-3. *Notifications* → **Webhook URL**:
-   `https://<domeningiz>/tv/<WEBHOOK_SECRET>`
-4. *Message* maydoniga hech narsa yozish shart emas — xabarni strategiyaning o'zi tayyorlaydi.
+## Bot nimalarni tekshiradi (Ruxsat bosilganda)
+
+- Signal `SIGNAL_TTL_MIN` (15 daq) dan eski bo'lsa — ochmaydi
+- Bugun `MAX_TRADES_PER_DAY` (5) ta bitim ochilgan bo'lsa — ochmaydi
+- Signal MGC/GC grafigidan bo'lmasa (masalan XAUUSD) — ochmaydi
+- Ekranda `TRADOVATE_ACCOUNT` hisobi ko'rinmasa — ochmaydi
+- Bozor narxi signaldan SL masofasining 30% idan ko'p qochgan yoki SL/TP oralig'idan chiqqan bo'lsa — ochmaydi
+- Buyurtmadan keyin SL va TP ekranda tasdiqlanmasa — **pozitsiyani darhol yopadi** va xabar beradi
+- Bitta signalga ikki marta bosilsa — ikkinchisi e'tiborsiz qoladi
+
+## Railway sozlamalari (Variables)
+
+| O'zgaruvchi | Qiymat |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | @BotFather bergan token |
+| `WEBHOOK_SECRET` | uzun tasodifiy satr |
+| `TELEGRAM_CHAT_ID` | `/start` yozganda bot beradi |
+| `EXECUTION_MODE` | `dry` yoki `live` |
+| `TRADOVATE_USERNAME` | Tradeify dashboard'idagi Tradovate login |
+| `TRADOVATE_PASSWORD` | Tradeify dashboard'idagi Tradovate parol |
+| `TRADOVATE_ACCOUNT` | hisob nomi/raqami (Tradovate'da ko'rinadigan) |
+
+Ixtiyoriy: `RISK_USD` (250), `MAX_CONTRACTS` (5), `MAX_TRADES_PER_DAY` (5), `MAX_DRIFT_FRAC` (0.3),
+`SIGNAL_TTL_MIN` (15), `TRADOVATE_SYMBOL` (bo'sh = joriy kontrakt avtomatik, masalan `MGCG7`),
+`TRADOVATE_URL` (`https://trader.tradovate.com`), `DISPLAY_TZ` (`Asia/Tashkent`).
+
+**Volume:** Railway'da servisga `/data` papkasiga Volume ulang. Unda Tradovate sessiyasi saqlanadi,
+aks holda har deploy'dan keyin bot kodni qayta so'raydi.
 
 ## Buyruqlar
 
 - `/start` — chat ID yoki bot holati
 - `/test` — namunaviy signal
-- `/status` — bot holati
+- `/status` — rejim, kontrakt, bugungi bitimlar
+- `/login` — Tradovate'ga ulanish (skrinshot bilan). Kod so'ralsa — kodni chatga yozing
+- `/screen` — Tradovate oynasining hozirgi skrinshoti
+- `/flat` — barcha pozitsiya va buyurtmalarni yopish (tasdiq bilan)
 
-## Sozlamalar (ixtiyoriy)
+## TradingView alert
 
-| O'zgaruvchi | Standart | Izoh |
-|---|---|---|
-| `VEST_URL` | `https://next.vestmarkets.com/trade/GC-PERP` | 🔗 tugmasi havolasi |
-| `SIGNAL_TTL_MIN` | `15` | shundan eski signalga tugma bosilsa ogohlantiradi |
-| `DISPLAY_TZ` | `Asia/Tashkent` | xabarlardagi vaqt |
-| `PUBLIC_URL` | Railway domeni | boshqa hostingda ishlatilsa |
-| `EXECUTION_MODE` | `manual` | hozircha faqat `manual` |
-
-## Muhim
-
-- Signal narxlari **XAUUSD (FOREX.com)** bo'yicha. Vest GC-PERP narxi biroz farq
-  qilishi mumkin — SL/TP'ni **punkt masofasi** bo'yicha qo'ying (bot ikkalasini ham yozadi).
-- Hajm **oz**da hisoblanadi ($50 risk / SL masofasi). Vest'da 1 kontrakt nechaga
-  teng ekanini bir marta tekshirib oling.
-- Faqat `TELEGRAM_CHAT_ID` dagi chat tugmalarni bosa oladi; begonalarga bot javob bermaydi.
+1. **MGC1!** grafigini oching (5m) va **Salom FVG Model — v0.8 (Telegram)** strategiyasini qo'shing.
+2. **Alert** → *Condition*: shu strategiya → **alert() function calls only**.
+3. *Notifications* → **Webhook URL**: `https://<domeningiz>/tv/<WEBHOOK_SECRET>`
 
 ## Lokal test
 
 ```bash
 pip install -r requirements.txt pytest
 pytest -q
+# brauzer testi (soxta Tradovate sahifasida):
+BROWSER_EXECUTABLE=/usr/bin/google-chrome pytest -q tests/test_browser.py
 ```

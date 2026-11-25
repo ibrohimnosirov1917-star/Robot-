@@ -51,5 +51,8 @@ class Telegram:
         return await self.call("setMyCommands", {"commands": [
             {"command": "start", "description": "Botni ishga tushirish va chat ID"},
             {"command": "test", "description": "Namunaviy signal yuborish"},
-            {"command": "status", "description": "Bot holati"},
+            {"command": "status", "description": "Bot holati va bugungi bitimlar"},
+            {"command": "login", "description": "Tradovate'ga ulanish (skrinshot bilan)"},
+            {"command": "screen", "description": "Tradovate oynasining skrinshoti"},
+            {"command": "flat", "description": "Barcha pozitsiyalarni yopish (favqulodda)"},
         ]})

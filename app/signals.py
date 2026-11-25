@@ -107,7 +107,13 @@ def tf_label(tf_sec: int) -> str:
     return f"{tf_sec // 60}m" if tf_sec < 3600 else f"{tf_sec // 3600}h"
 
 
-def signal_caption(sig: Signal, tz_name: str) -> str:
+def is_futures_symbol(symbol: str) -> bool:
+    """Signal MGC/GC fyuchers grafigidan kelganmi (narxlar Tradovate bilan bir xil bo'lishi uchun)."""
+    s = symbol.upper().replace("COMEX:", "")
+    return s.startswith("MGC") or s.startswith("GC")
+
+
+def signal_caption(sig: Signal, tz_name: str, plan) -> str:
     icon = "🟢" if sig.side == "BUY" else "🔴"
     t = sig.signal_time.astimezone(_tz(tz_name)).strftime("%d.%m %H:%M")
     sl_sign = "−" if sig.side == "BUY" else "+"
@@ -119,10 +125,13 @@ def signal_caption(sig: Signal, tz_name: str) -> str:
         f"Kirish: <b>{fmt_price(sig.entry)}</b>",
         f"SL: {fmt_price(sig.sl)}  ({sl_sign}{sig.sl_dist:.2f})",
         f"TP: {fmt_price(sig.tp)}  ({tp_sign}{sig.tp_dist:.2f}) · {sig.rr:.1f}R",
-        f"Hajm: <b>{sig.qty:.2f} oz</b> · Risk ${sig.risk_usd:.0f}",
-        "",
-        "Bitim ochish uchun tugmani bosing 👇",
+        f"Hajm: <b>{plan.contracts} MGC</b> · Risk <b>${plan.risk_total:,.0f}</b>",
     ]
+    if plan.over_risk:
+        lines.append(f"⚠️ SL katta: 1 kontraktning o'zi ${plan.risk_per_contract:,.0f} risk")
+    if not is_futures_symbol(sig.symbol):
+        lines.append("⚠️ Signal fyuchers grafigidan emas — strategiyani <b>MGC1!</b> grafigiga qo'ying")
+    lines += ["", "Bitimga ruxsat berasizmi? 👇"]
     return "\n".join(lines)
 
 
@@ -131,32 +140,7 @@ def decision_line(choice: str, tz_name: str) -> str:
     if choice == "SKIP":
         return f"\n\n⏭ <b>O'tkazib yuborildi</b> ({now})"
     icon = "🟢" if choice == "BUY" else "🔴"
-    return f"\n\n{icon} <b>Tanlandi: {choice}</b> ({now})"
-
-
-def order_ticket(sig: Signal, choice: str, age_min: float, ttl_min: int) -> str:
-    """Vest'da qo'lda kiritish uchun tayyor buyurtma ma'lumoti."""
-    icon = "🟢" if choice == "BUY" else "🔴"
-    sl_side = "pastda" if choice == "BUY" else "yuqorida"
-    tp_side = "yuqorida" if choice == "BUY" else "pastda"
-    d = 1 if choice == "BUY" else -1
-    sl_px = sig.entry - d * sig.sl_dist
-    tp_px = sig.entry + d * sig.tp_dist
-    lines = [f"{icon} <b>{choice} — Vest GC-PERP'da oching</b>", ""]
-    if choice != sig.side:
-        lines += [f"⚠️ Signal <b>{sig.side}</b> edi, siz <b>{choice}</b> tanladingiz.", ""]
-    if age_min > ttl_min:
-        lines += [f"⚠️ Signal {age_min:.0f} daqiqa oldin chiqqan — narx o'zgargan bo'lishi mumkin.", ""]
-    lines += [
-        f"Hajm: <b>{sig.qty:.2f}</b>",
-        f"SL: kirish narxidan <b>{sig.sl_dist:.2f}</b> punkt {sl_side}",
-        f"TP: kirish narxidan <b>{sig.tp_dist:.2f}</b> punkt {tp_side} ({sig.rr:.1f}R)",
-        f"Risk: ${sig.risk_usd:.0f}",
-        "",
-        f"<i>{sig.symbol} bo'yicha: kirish {fmt_price(sig.entry)} · SL {fmt_price(sl_px)} · TP {fmt_price(tp_px)}</i>",
-        "<i>Vest narxi biroz farq qilishi mumkin — SL/TP ni punkt masofasi bo'yicha qo'ying.</i>",
-    ]
-    return "\n".join(lines)
+    return f"\n\n{icon} <b>Ruxsat berildi: {choice}</b> ({now})"
 
 
 def demo_signal() -> Signal:
@@ -182,8 +166,8 @@ def demo_signal() -> Signal:
     risk = sl - entry
     tp = round(entry - 1.4 * risk, 2)
     return Signal(
-        side="SELL", symbol="XAUUSD (TEST)", entry=entry, sl=sl, tp=tp,
-        qty=round(50 / risk, 2), risk_usd=50, rr=1.4,
+        side="SELL", symbol="MGC1! (TEST)", entry=entry, sl=sl, tp=tp,
+        qty=1, risk_usd=250, rr=1.4,
         bar_time_ms=int((time.time() // 300) * 300 * 1000) - 300_000, tf_sec=300,
         candles={"o": o, "h": h, "l": l, "c": c},
     )

@@ -1,11 +1,16 @@
 import json
+import time
+from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.executor import ExecutionResult, OrderRequest
 from app.main import create_app
 from app.signals import Signal, SignalError, demo_signal
+from app.sizing import front_month, plan_size, round_tick
+from app.tradovate import check_price, fill_template, parse_price
 
 CHAT = "111"
 SECRET = "s3cret-value"
@@ -49,16 +54,36 @@ class FakeTelegram:
         return [c for c in self.calls if c[0] == name][-1][1]
 
 
-def settings(chat=CHAT):
-    return Settings(bot_token="x", chat_id=chat, webhook_secret=SECRET, public_url="https://bot.example.com",
-                    vest_url="https://next.vestmarkets.com/trade/GC-PERP", signal_ttl_min=15,
-                    display_tz="Asia/Tashkent", execution_mode="manual")
+class FakeLive:
+    """Haqiqiy brauzersiz 'live' ijrochi — main.py oqimini tekshirish uchun."""
+    name = "live"
+    live = True
+
+    def __init__(self):
+        self.orders = []
+
+    async def execute(self, req):
+        self.orders.append(req)
+        return ExecutionResult(ok=True, executed=True, text="✅ Bitim ochildi")
+
+    async def describe(self):
+        return "fake"
+
+    async def close(self):
+        pass
 
 
-# Pine v0.8 yuboradigan formatdagi xabar
+def settings(**kw):
+    base = dict(bot_token="x", chat_id=CHAT, webhook_secret=SECRET, public_url="https://bot.example.com",
+                tradovate_symbol="MGCG7")
+    base.update(kw)
+    return Settings(**base)
+
+
+# Pine v0.8 yuboradigan formatdagi xabar (MGC1! grafigidan)
 PINE_PAYLOAD = {
-    "v": 1, "symbol": "XAUUSD", "tf_sec": 300, "side": "SELL", "entry": 3543.21, "sl": 3560.87, "tp": 3518.49,
-    "qty": 2.83, "risk_usd": 50, "rr": 1.4, "time": 1795598700000,
+    "v": 1, "symbol": "MGC1!", "tf_sec": 300, "side": "SELL", "entry": 3543.21, "sl": 3560.87, "tp": 3518.49,
+    "qty": 0.28, "risk_usd": 250, "rr": 1.4, "time": 1795598700000,
     "o": [3550 + i * 0.1 for i in range(12)], "h": [3552 + i * 0.1 for i in range(12)],
     "l": [3548 + i * 0.1 for i in range(12)], "c": [3549 + i * 0.1 for i in range(12)],
 }
@@ -69,6 +94,7 @@ def env():
     tg = FakeTelegram()
     app = create_app(settings(), tg)
     with TestClient(app) as client:
+        app.state.bot.run_inline = True
         yield client, tg, app
 
 
@@ -81,6 +107,34 @@ def press(client, app, data, chat=CHAT):
     return client.post("/telegram", json=upd, headers=tg_headers(app))
 
 
+def say(client, app, text, chat=CHAT):
+    upd = {"message": {"chat": {"id": int(chat)}, "text": text}}
+    return client.post("/telegram", json=upd, headers=tg_headers(app))
+
+
+def post_signal(client, payload=PINE_PAYLOAD):
+    return client.post("/tv/" + SECRET, content=json.dumps(payload)).json()["id"]
+
+
+# ───────── hajm va kontrakt ─────────
+def test_plan_size():
+    assert plan_size(23.64, 250, 10, 5).contracts == 1          # 1 × $236
+    p = plan_size(12, 250, 10, 5)
+    assert p.contracts == 2 and p.risk_total == 240 and not p.over_risk
+    p = plan_size(30, 250, 10, 5)
+    assert p.contracts == 1 and p.over_risk and p.risk_total == 300
+    assert plan_size(2, 250, 10, 5).contracts == 5               # maks kontrakt cheklovi
+
+
+def test_front_month_and_tick():
+    assert front_month("MGC", date(2026, 11, 26)) == "MGCG7"
+    assert front_month("MGC", date(2026, 11, 10)) == "MGCZ6"
+    assert front_month("MGC", date(2026, 12, 30)) == "MGCG7"
+    assert front_month("MGC", date(2027, 1, 25)) == "MGCJ7"
+    assert round_tick(3536.16, 0.1) == 3536.2
+
+
+# ───────── signal xabari ─────────
 def test_startup_sets_webhook(env):
     _, tg, _ = env
     assert tg.last("set_webhook")["url"] == "https://bot.example.com/telegram"
@@ -88,88 +142,114 @@ def test_startup_sets_webhook(env):
 
 def test_tradingview_wrong_secret(env):
     client, tg, _ = env
-    r = client.post("/tv/wrong", content=json.dumps(PINE_PAYLOAD))
-    assert r.status_code == 403
+    assert client.post("/tv/wrong", content=json.dumps(PINE_PAYLOAD)).status_code == 403
     assert "send_photo" not in tg.names()
 
 
-def test_signal_sent_with_chart_and_buttons(env):
+def test_signal_sent_with_contracts_and_buttons(env):
     client, tg, _ = env
-    r = client.post("/tv/" + SECRET, content=json.dumps(PINE_PAYLOAD), headers={"content-type": "text/plain"})
-    assert r.status_code == 200 and r.json()["ok"]
+    sid = post_signal(client)
     call = tg.last("send_photo")
     assert call["photo"][:8] == b"\x89PNG\r\n\x1a\n"
-    assert "SELL signal" in call["caption"] and "3,543.21" in call["caption"] and "2.83 oz" in call["caption"]
-    buttons = [b.get("callback_data") or b.get("url") for row in call["reply_markup"]["inline_keyboard"] for b in row]
-    sid = r.json()["id"]
-    assert f"b:{sid}" in buttons and f"s:{sid}" in buttons and f"x:{sid}" in buttons
+    cap = call["caption"]
+    assert "SELL signal" in cap and "3,543.21" in cap and "1 MGC" in cap and "$177" in cap
+    assert "Vest" not in cap and "oz" not in cap
+    kb = call["reply_markup"]["inline_keyboard"]
+    datas = [b.get("callback_data") for row in kb for b in row]
+    assert f"a:{sid}" in datas and f"x:{sid}" in datas
+    assert "Ruxsat: SELL 1 MGC" in kb[0][0]["text"]
+    assert not any("vest" in (b.get("url") or "") for row in kb for b in row)
+
+
+def test_xauusd_signal_warns(env):
+    client, tg, _ = env
+    post_signal(client, dict(PINE_PAYLOAD, symbol="XAUUSD"))
+    assert "MGC1!" in tg.last("send_photo")["caption"]
 
 
 def test_invalid_signal_rejected(env):
     client, _, _ = env
     bad = dict(PINE_PAYLOAD, side="BUY")  # BUY uchun SL kirishdan yuqorida — noto'g'ri
-    r = client.post("/tv/" + SECRET, content=json.dumps(bad))
-    assert r.status_code == 400
+    assert client.post("/tv/" + SECRET, content=json.dumps(bad)).status_code == 400
 
 
-def test_sell_press_sends_ticket_and_locks(env):
+# ───────── ruxsat oqimi ─────────
+def test_approve_in_dry_mode(env):
     client, tg, app = env
-    sid = client.post("/tv/" + SECRET, content=json.dumps(PINE_PAYLOAD)).json()["id"]
-    assert press(client, app, f"s:{sid}").status_code == 200
-    ticket = tg.last("send_message")["text"]
-    assert "SELL — Vest GC-PERP" in ticket and "17.66" in ticket and "24.72" in ticket
-    assert "Tanlandi: SELL" in tg.last("edit_caption")["caption"]
-    press(client, app, f"b:{sid}")  # ikkinchi bosish qabul qilinmaydi
-    assert "qaror qabul qilingan" in tg.last("answer_callback")["text"]
-
-
-def test_opposite_side_warns(env):
-    client, tg, app = env
-    sid = client.post("/tv/" + SECRET, content=json.dumps(PINE_PAYLOAD)).json()["id"]
-    press(client, app, f"b:{sid}")
-    ticket = tg.last("send_message")["text"]
-    assert "Signal <b>SELL</b> edi" in ticket and "pastda" in ticket
+    sid = post_signal(client)
+    assert press(client, app, f"a:{sid}").status_code == 200
+    msg = tg.last("send_message")["text"]
+    assert "TEST rejimi" in msg and "MGCG7" in msg and "3,560.90" in msg and "3,518.50" in msg
+    assert "Ruxsat berildi: SELL" in tg.last("edit_caption")["caption"]
+    # ikkinchi bosish — qayta ochilmaydi
+    n = len(tg.calls)
+    press(client, app, f"a:{sid}")
+    assert "qaror qabul qilingan" in tg.calls[-1][1]["text"] and len(tg.calls) == n + 1
 
 
 def test_skip(env):
     client, tg, app = env
-    sid = client.post("/tv/" + SECRET, content=json.dumps(PINE_PAYLOAD)).json()["id"]
+    sid = post_signal(client)
     press(client, app, f"x:{sid}")
     assert "O'tkazib yuborildi" in tg.last("edit_caption")["caption"]
-    assert not any(c[0] == "send_message" for c in tg.calls)
+    assert "TEST rejimi" not in " ".join(str(c) for c in tg.calls)
 
 
-def test_stranger_cannot_press(env):
+def test_expired_signal_not_executed(env):
     client, tg, app = env
-    sid = client.post("/tv/" + SECRET, content=json.dumps(PINE_PAYLOAD)).json()["id"]
-    press(client, app, f"s:{sid}", chat="999")
-    assert tg.last("answer_callback")["text"] == "Ruxsat yo'q"
+    sid = post_signal(client)
+    app.state.bot.signals[sid].received_at = time.time() - 3600
+    press(client, app, f"a:{sid}")
+    last = tg.last("answer_callback")
+    assert last["alert"] and "eskirgan" in last["text"]
     assert app.state.bot.signals[sid].decision is None
 
 
-def test_telegram_wrong_token(env):
-    client, _, _ = env
-    r = client.post("/telegram", json={"message": {"chat": {"id": 1}, "text": "/start"}},
-                    headers={"X-Telegram-Bot-Api-Secret-Token": "bad"})
-    assert r.status_code == 403
-
-
-def test_start_shows_chat_id_for_unknown_chat():
-    tg = FakeTelegram()
-    app = create_app(settings(chat=None), tg)
-    with TestClient(app) as client:
-        client.post("/telegram", json={"message": {"chat": {"id": 555}, "text": "/start"}}, headers=tg_headers(app))
-    assert "555" in tg.last("send_message")["text"]
-
-
-def test_test_command_sends_demo(env):
+def test_live_flow_daily_limit_and_order(env):
     client, tg, app = env
-    client.post("/telegram", json={"message": {"chat": {"id": int(CHAT)}, "text": "/test"}}, headers=tg_headers(app))
-    assert "SELL signal" in tg.last("send_photo")["caption"]
+    fake = FakeLive()
+    app.state.bot.executor = fake
+    for i in range(5):
+        press(client, app, f"a:{post_signal(client)}")
+    assert len(fake.orders) == 5
+    o = fake.orders[0]
+    assert (o.side, o.contracts, o.symbol, o.sl, o.tp) == ("SELL", 1, "MGCG7", 3560.9, 3518.5)
+    assert abs(o.max_drift - 0.3 * 17.66) < 1e-6
+    press(client, app, f"a:{post_signal(client)}")
+    assert "limit" in tg.last("answer_callback")["text"] and len(fake.orders) == 5
 
 
-def test_signal_validation():
+def test_live_refuses_non_futures_symbol(env):
+    client, tg, app = env
+    app.state.bot.executor = FakeLive()
+    press(client, app, f"a:{post_signal(client, dict(PINE_PAYLOAD, symbol='XAUUSD'))}")
+    assert "MGC1!" in tg.last("answer_callback")["text"] and not app.state.bot.executor.orders
+
+
+def test_status_and_stranger(env):
+    client, tg, app = env
+    say(client, app, "/status")
+    assert "TEST" in tg.last("send_message")["text"] and "MGCG7" in tg.last("send_message")["text"]
+    n = len(tg.calls)
+    say(client, app, "/status", chat="999")
+    assert len(tg.calls) == n
+
+
+def test_demo_signal_validation():
     with pytest.raises(SignalError):
         Signal.from_payload({"side": "HOLD", "entry": 1, "sl": 0, "tp": 2})
     s = demo_signal()
     assert s.tp < s.entry < s.sl
+
+
+# ───────── Tradovate yordamchi funksiyalari ─────────
+REQ = OrderRequest(signal_id="x", side="BUY", contracts=2, entry=3561.9, sl=3536.2, tp=3597.9, symbol="MGCG7", max_drift=7.7)
+
+
+def test_price_checks():
+    assert parse_price("Last 3,561.80") == 3561.8
+    assert parse_price("—") is None
+    assert check_price(REQ, 3563.0) is None
+    assert "qochgan" in check_price(REQ, 3575.0)
+    assert "oralig'ida emas" in check_price(REQ, 3530.0)
+    assert fill_template("{side_title} {qty} {symbol} {sl}", REQ) == "Buy 2 MGCG7 3536.2"

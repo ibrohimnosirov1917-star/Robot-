@@ -80,7 +80,7 @@ def render_chart(sig: Signal, tz_name: str = "Asia/Tashkent") -> bytes | None:
         ax.set_xticks([])
 
     icon = "BUY" if sig.side == "BUY" else "SELL"
-    ax.set_title(f"{sig.symbol} {tf_label(sig.tf_sec)} · {icon} · {sig.rr:.1f}R · risk ${sig.risk_usd:.0f}", fontsize=11, loc="left")
+    ax.set_title(f"{sig.symbol} {tf_label(sig.tf_sec)} · {icon} · {sig.rr:.1f}R", fontsize=11, loc="left")
     fig.tight_layout()
 
     buf = io.BytesIO()
