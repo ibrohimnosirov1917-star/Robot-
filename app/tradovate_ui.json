@@ -20,11 +20,14 @@
       "button:has-text('Подтвердить')"
     ],
     "welcome_close": [
-      "button.close-button"
+      "button.close-button",
+      "button:has-text('Продолжить')",
+      "button:has-text('Continue')"
     ],
     "env_select": [
       "button:has-text('Access Simulation')",
-      "button:has-text('Доступ к симуляции')"
+      "button:has-text('Доступ к симуляции')",
+      "button:has-text('Simulation')"
     ],
     "captcha": [
       "iframe[src*='captcha']",

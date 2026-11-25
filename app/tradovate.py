@@ -163,28 +163,42 @@ class TradovateBrowser:
             await pw.fill(self.s.tradovate_pass)
             await pw.press("Enter")  # Google/Apple tugmalarini adashib bosmaslik uchun Enter bilan
             await asyncio.sleep(2)
-        if await self._find(lg.get("captcha", []), 1500):
-            raise ExecError("Tradovate 'robot emasman' tekshiruvini so'rayapti — bot buni o'tolmaydi")
-        code_box = await self._find(lg["code_input"], 4000)
-        if code_box is not None:
-            code = await self.ask_code("🔐 Tradovate bir martalik kod so'rayapti. Kodni shu chatga yozing (5 daqiqa ichida).")
-            if not code:
-                raise ExecError("Kod kiritilmadi")
-            await code_box.fill(code)
-            sub = await self._find(lg["code_submit"], 2000)
-            if sub is not None:
-                await sub.click()
-            else:
-                await code_box.press("Enter")
-            await asyncio.sleep(2)
-        welcome = await self._find(lg.get("welcome_close", []), 2000)
-        if welcome is not None:
-            await welcome.click()
-        env = await self._find(lg["env_select"], 4000)
-        if env is not None:
-            await env.click()
-        if not await self._find(lg["ready"], 25000):
-            raise ExecError("Tradovate savdo oynasi ochilmadi")
+        # Kirgandan keyingi oynalar (kod, xush kelibsiz, rejim tanlash) har xil tartibda va kechikib
+        # chiqishi mumkin — savdo oynasi ochilguncha har biriga qarab, kerakli tugmani bosamiz.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 60
+        code_asked = False
+        while loop.time() < deadline:
+            if await self._find(lg["ready"], 500):
+                return
+            if await self._find(lg.get("captcha", []), 300):
+                raise ExecError("Tradovate 'robot emasman' tekshiruvini so'rayapti — bot buni o'tolmaydi")
+            welcome = await self._find(lg.get("welcome_close", []), 300)
+            if welcome is not None:
+                await welcome.click()
+                await asyncio.sleep(1.5)
+                continue
+            code_box = await self._find(lg["code_input"], 300)
+            if code_box is not None and not code_asked:
+                code_asked = True
+                code = await self.ask_code("🔐 Tradovate bir martalik kod so'rayapti. Kodni shu chatga yozing (5 daqiqa ichida).")
+                if not code:
+                    raise ExecError("Kod kiritilmadi")
+                await code_box.fill(code)
+                sub = await self._find(lg["code_submit"], 1500)
+                if sub is not None:
+                    await sub.click()
+                else:
+                    await code_box.press("Enter")
+                await asyncio.sleep(2)
+                continue
+            env = await self._find(lg["env_select"], 300)
+            if env is not None:
+                await env.click()
+                await asyncio.sleep(2)
+                continue
+            await asyncio.sleep(1)
+        raise ExecError("Tradovate savdo oynasi ochilmadi")
 
     async def _check_account(self) -> None:
         acc = self.s.tradovate_account

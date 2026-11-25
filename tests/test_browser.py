@@ -20,10 +20,10 @@ pytest.importorskip("playwright")
 
 MOCK = r"""<!doctype html><html><head><meta charset="utf-8"></head><body>
 <div id="login"><input id="name-input" type="text"><input id="password-input" type="password"
-  onkeydown="if(event.key==='Enter')go('welcome')"><button class="fat-button">Войти</button>
+  onkeydown="if(event.key==='Enter'){go('env');setTimeout(()=>{document.getElementById('welcome').hidden=false},2500)}"><button class="fat-button">Войти</button>
   <button class="fat-button">Вход с помощью учетной записи Google</button></div>
-<div id="welcome" hidden><button class="close-button" onclick="go('env')">Продолжить</button></div>
-<div id="env" hidden><button onclick="go('trade')">Доступ к симуляции торговли</button></div>
+<div id="welcome" hidden style="position:fixed;inset:0;background:#222"><button class="close-button" onclick="document.getElementById('welcome').hidden=true">Продолжить</button></div>
+<div id="env" hidden><button onclick="if(document.getElementById('welcome').hidden)go('trade')">Доступ к симуляции торговли</button></div>
 <div id="trade" hidden>
   <div>СЧЕТ TDFY-DEMO-1</div>
   <div data-testid="typeahead-wrapper" class="typeahead"><input data-testid="order-ticket-symbol-search"
@@ -54,7 +54,7 @@ MOCK = r"""<!doctype html><html><head><meta charset="utf-8"></head><body>
 <script>
 let side='Купить', otype='МАРКЕТ', sym='';
 window.LAST=3561.8; window.REJECT=false; window.FAKE_TP_TICKS=null; window.NO_SL=false;
-function go(id){for(const d of ['login','welcome','env','trade'])document.getElementById(d).hidden=(d!==id);}
+function go(id){for(const d of ['login','env','trade'])document.getElementById(d).hidden=(d!==id);}
 function ta(i){const w=i.parentElement;w.classList.add('open');document.getElementById('ta-list').innerHTML='<li><a>'+i.value+'</a></li>';}
 function setType(t){otype=t;document.getElementById('type').textContent=t;
   document.querySelector('[data-testid=order-ticket-order-type-select] ul').hidden=true;
