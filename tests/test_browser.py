@@ -25,6 +25,8 @@ MOCK = r"""<!doctype html><html><head><meta charset="utf-8"></head><body>
 <div id="welcome" hidden style="position:fixed;inset:0;background:#222"><button class="close-button" onclick="document.getElementById('welcome').hidden=true">Продолжить</button></div>
 <div id="env" hidden><button onclick="if(document.getElementById('welcome').hidden)go('trade')">Доступ к симуляции торговли</button></div>
 <div id="trade" hidden>
+  <div class="popover" style="position:fixed;top:0;left:0;width:400px;height:300px;background:#333;z-index:9">Новое! ATM
+    <button class="btn" onclick="this.parentElement.remove()">Закрыть</button></div>
   <div>СЧЕТ TDFY-DEMO-1</div>
   <div data-testid="typeahead-wrapper" class="typeahead"><input data-testid="order-ticket-symbol-search"
     oninput="ta(this)" onkeydown="if(event.key==='Enter'){this.parentElement.classList.remove('open');sym=this.value;setType(otype)}">

@@ -39,6 +39,48 @@
   },
   "prepare_steps": [
     {
+      "do": "click",
+      "optional": true,
+      "what": "yordam oynachasini yopish",
+      "sel": [
+        ".popover button:text-is('Закрыть')",
+        ".popover .btn:text-is('Закрыть')",
+        ".popover button:text-is('Close')",
+        ".popover .btn:text-is('Close')",
+        ".popover button:text-is('Got it')"
+      ],
+      "timeout_ms": 800,
+      "pause": 0.5
+    },
+    {
+      "do": "click",
+      "optional": true,
+      "what": "yordam oynachasini yopish",
+      "sel": [
+        ".popover button:text-is('Закрыть')",
+        ".popover .btn:text-is('Закрыть')",
+        ".popover button:text-is('Close')",
+        ".popover .btn:text-is('Close')",
+        ".popover button:text-is('Got it')"
+      ],
+      "timeout_ms": 800,
+      "pause": 0.5
+    },
+    {
+      "do": "click",
+      "optional": true,
+      "what": "yordam oynachasini yopish",
+      "sel": [
+        ".popover button:text-is('Закрыть')",
+        ".popover .btn:text-is('Закрыть')",
+        ".popover button:text-is('Close')",
+        ".popover .btn:text-is('Close')",
+        ".popover button:text-is('Got it')"
+      ],
+      "timeout_ms": 800,
+      "pause": 0.5
+    },
+    {
       "do": "type",
       "what": "kontrakt (symbol) maydoni",
       "sel": [
