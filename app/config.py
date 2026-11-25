@@ -31,6 +31,8 @@ class Settings:
     tradovate_symbol: str = ""  # bo'sh bo'lsa joriy MGC kontrakti avtomatik tanlanadi (masalan MGCG7)
     session_dir: str = "/data"
     tradingview_url: str = "https://www.tradingview.com/chart/?symbol=COMEX%3AMGC1%21"
+    # Eslatmalar: "2026-12-25=Matn; 2026-12-20=Boshqa matn" — bot 7, 3, 1 va 0 kun qolganda Telegram'ga yozadi
+    reminders: str = ""
 
     @property
     def telegram_secret_token(self) -> str:
@@ -71,5 +73,6 @@ def load_settings() -> Settings:
         tradovate_account=_env("TRADOVATE_ACCOUNT"),
         tradovate_symbol=_env("TRADOVATE_SYMBOL").upper(),
         session_dir=_env("SESSION_DIR", "/data"),
+        reminders=_env("REMINDERS"),
         tradingview_url=_env("TRADINGVIEW_URL", "https://www.tradingview.com/chart/?symbol=COMEX%3AMGC1%21"),
     )

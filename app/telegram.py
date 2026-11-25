@@ -58,6 +58,7 @@ class Telegram:
             {"command": "status", "description": "Bot holati va bugungi bitimlar"},
             {"command": "stats", "description": "Jurnal statistikasi (masalan /stats 30)"},
             {"command": "jurnal", "description": "Jurnalni CSV fayl qilib yuborish"},
+            {"command": "eslatma", "description": "To'lov va muddatlar ro'yxati"},
             {"command": "login", "description": "Tradovate'ga ulanish (skrinshot bilan)"},
             {"command": "screen", "description": "Tradovate oynasining skrinshoti"},
             {"command": "flat", "description": "Barcha pozitsiyalarni yopish (favqulodda)"},

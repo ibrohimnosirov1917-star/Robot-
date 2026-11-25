@@ -22,6 +22,7 @@ from .chart import render_chart
 from .config import Settings, load_settings
 from .executor import ExecutionResult, OrderRequest, make_executor
 from .journal import Journal
+from .reminders import due as due_reminders
 from .signals import Signal, SignalError, _tz, decision_line, demo_signal, fmt_price, is_futures_symbol, signal_caption
 from .sizing import Plan, front_month, plan_size, round_tick
 from .telegram import Telegram
@@ -131,6 +132,28 @@ async def send_result(state: State, chat_id, result: ExecutionResult) -> None:
         await state.tg.send_message(chat_id, result.text)
 
 
+async def send_reminders(state: State) -> int:
+    s = state.settings
+    msgs = due_reminders(s.reminders, datetime.now(tz=_tz(s.display_tz)).date())
+    for m in msgs:
+        await state.tg.send_message(s.chat_id, m)
+    return len(msgs)
+
+
+async def reminder_loop(state: State) -> None:
+    """Har kuni Toshkent vaqti bilan 10:00 da eslatmalarni tekshiradi."""
+    sent_on = None
+    while True:
+        try:
+            now = datetime.now(tz=_tz(state.settings.display_tz))
+            if now.hour >= 10 and sent_on != now.date() and state.settings.chat_id:
+                sent_on = now.date()
+                await send_reminders(state)
+        except Exception as e:  # eslatma xatosi botni to'xtatmasin
+            log.warning("Eslatma yuborilmadi: %s", e)
+        await asyncio.sleep(600)
+
+
 def create_app(settings: Settings | None = None, tg: Telegram | None = None) -> FastAPI:
     settings = settings or load_settings()
 
@@ -148,7 +171,10 @@ def create_app(settings: Settings | None = None, tg: Telegram | None = None) -> 
                 log.error("Telegram webhook o'rnatilmadi: %s", e)
         else:
             log.warning("PUBLIC_URL yoki RAILWAY_PUBLIC_DOMAIN yo'q — Telegram webhook o'rnatilmadi")
+        reminder_task = asyncio.create_task(reminder_loop(state)) if settings.reminders else None
         yield
+        if reminder_task:
+            reminder_task.cancel()
         await state.executor.close()
 
     app = FastAPI(title="Salom FVG signal bot", lifespan=lifespan)
@@ -250,6 +276,15 @@ async def handle_message(state: State, msg: dict) -> None:
     elif cmd.startswith("/jurnal"):
         data = state.journal.to_csv(s.display_tz, s.point_value)
         await tg.send_document(chat_id, data, "jurnal.csv", f"📒 Jurnal: {len(state.journal.trades)} ta signal")
+    elif cmd.startswith("/eslatma"):
+        from .reminders import parse
+        items = parse(s.reminders)
+        if not items:
+            await tg.send_message(chat_id, "Eslatmalar sozlanmagan.")
+        else:
+            today = datetime.now(tz=_tz(s.display_tz)).date()
+            await tg.send_message(chat_id, "⏰ <b>Muddatlar:</b>\n" + "\n".join(
+                f"• {t} — {d:%d.%m.%Y} ({(d - today).days} kun qoldi)" for d, t in sorted(items)))
     elif cmd.startswith("/flat"):
         await tg.send_message(chat_id, "⚠️ Barcha ochiq pozitsiya va buyurtmalarni yopaymi?",
                               {"inline_keyboard": [[{"text": "Ha, hammasini yopish", "callback_data": "f:yes"},

@@ -329,3 +329,22 @@ def test_exit_without_signal(env):
     client, tg, _ = env
     r = client.post("/tv/" + SECRET, content=json.dumps(exit_payload()))
     assert r.json()["id"] is None and "topilmadi" in tg.last("send_photo")["caption"]
+
+
+def test_reminders():
+    from app.reminders import due, parse
+
+    spec = "2026-12-25=TradingView alert muddati; 2026-12-20=Railway; xato-qator"
+    assert len(parse(spec)) == 2
+    assert due(spec, date(2026, 12, 18)) == ["⏰ <b>Eslatma:</b> TradingView alert muddati — 7 kundan keyin tugaydi (25.12.2026)."]
+    assert "bugun tugaydi" in due(spec, date(2026, 12, 20))[0]
+    assert due(spec, date(2026, 12, 10)) == []
+    assert any("Muddati o'tgan" in m for m in due(spec, date(2026, 12, 22)))
+
+
+def test_eslatma_command(tmp_path):
+    tg = FakeTelegram()
+    app = create_app(settings(session_dir=str(tmp_path), reminders="2030-01-01=Railway to'lovi"), tg)
+    with TestClient(app) as client:
+        say(client, app, "/eslatma")
+        assert "Railway to'lovi — 01.01.2030" in tg.last("send_message")["text"]
