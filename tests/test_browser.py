@@ -18,25 +18,62 @@ from app.executor import OrderRequest
 
 pytest.importorskip("playwright")
 
-MOCK = """<!doctype html><html><body>
-<div id="login"><input id="name-input" type="text"><input id="password-input" type="password">
-<button onclick="go('code')">Login</button></div>
-<div id="code" hidden><input name="code"><button onclick="go('env')">Verify</button></div>
-<div id="env" hidden><button onclick="go('trade')">Access Simulation</button></div>
+MOCK = r"""<!doctype html><html><head><meta charset="utf-8"></head><body>
+<div id="login"><input id="name-input" type="text"><input id="password-input" type="password"
+  onkeydown="if(event.key==='Enter')go('welcome')"><button class="fat-button">Войти</button>
+  <button class="fat-button">Вход с помощью учетной записи Google</button></div>
+<div id="welcome" hidden><button class="close-button" onclick="go('env')">Продолжить</button></div>
+<div id="env" hidden><button onclick="go('trade')">Доступ к симуляции торговли</button></div>
 <div id="trade" hidden>
-  <div>Account: TDFY-DEMO-1</div>
-  <span id="last-price">3,561.80</span>
-  <input placeholder="Symbol"><input placeholder="Qty"><input placeholder="Stop price"><input placeholder="Target price">
-  <button onclick="order('Buy')">Buy Mkt</button><button onclick="order('Sell')">Sell Mkt</button>
+  <div>СЧЕТ TDFY-DEMO-1</div>
+  <div data-testid="typeahead-wrapper" class="typeahead"><input data-testid="order-ticket-symbol-search"
+    oninput="ta(this)" onkeydown="if(event.key==='Enter'){this.parentElement.classList.remove('open');sym=this.value;setType(otype)}">
+    <ul id="ta-list"></ul></div>
+  <div data-testid="order-ticket-action-switch"><label onclick="side='Купить'">Купить</label><label onclick="side='Продать'">Продать</label></div>
+  <div data-testid="order-ticket-quantity"><input id="qty"></div>
+  <div data-testid="order-ticket-price-input"><input id="price"></div>
+  <div data-testid="order-ticket-order-type-select"><div onclick="this.nextElementSibling.hidden=false"><span id="type">МАРКЕТ</span></div>
+    <ul hidden><li onclick="setType('МАРКЕТ')"><a>МАРКЕТ</a></li><li onclick="setType('ЛИМИТ')"><a>ЛИМИТ</a></li></ul></div>
+  <button data-testid="order-ticket-send-button" onclick="send()">Отправить</button>
+  <button data-testid="simple-tpsl-order-ticket-enable-tpsl-button" onclick="this.hidden=true;document.getElementById('tpsl').hidden=false">Включить бракет-ордера</button>
+  <div id="tpsl" hidden>
+    <div data-testid="simple-tpsl-show-in-units-select"><div onclick="this.nextElementSibling.hidden=false">Тики</div>
+      <ul hidden><li onclick="this.closest('ul').hidden=true"><a>Тики</a></li><li><a>Цена</a></li></ul></div>
+    <label data-testid="simple-tpsl-bracket-0-take-profit-checkbox-label" class="checkbox" onclick="this.classList.toggle('checkbox-active')">TP</label>
+    <div data-testid="simple-tpsl-bracket-0-take-profit-input"><input id="tp" value="2"></div>
+    <label data-testid="simple-tpsl-bracket-0-stop-loss-checkbox-label" class="checkbox checkbox-active" onclick="this.classList.toggle('checkbox-active')">SL</label>
+    <div data-testid="simple-tpsl-bracket-0-stop-loss-input"><input id="sl" value="2"></div>
+  </div>
+  <div id="placeholder-for-modals"></div>
+  <div class="lm_tab" onclick="document.getElementById('orders').hidden=false">Ордера</div>
+  <div class="lm_content" id="orders" style="white-space:pre" hidden></div>
   <button onclick="document.getElementById('orders').textContent='FLAT'">Exit at Mkt &amp; Cxl</button>
-  <div id="orders"></div>
 </div>
 <script>
-function go(id){for(const d of ['login','code','env','trade'])document.getElementById(d).hidden=(d!==id);}
-function order(side){
-  const v=[...document.querySelectorAll('#trade input')].map(i=>i.value);
-  if(v[2]==='BADSL'){document.getElementById('orders').textContent='Filled '+side+' no stop';return;}
-  document.getElementById('orders').textContent=side+' '+v[1]+' '+v[0]+' STOP '+v[2]+' TARGET '+v[3];
+let side='Купить', otype='МАРКЕТ', sym='';
+window.LAST=3561.8; window.REJECT=false; window.FAKE_TP_TICKS=null;
+function go(id){for(const d of ['login','welcome','env','trade'])document.getElementById(d).hidden=(d!==id);}
+function ta(i){const w=i.parentElement;w.classList.add('open');document.getElementById('ta-list').innerHTML='<li><a>'+i.value+'</a></li>';}
+function setType(t){otype=t;document.getElementById('type').textContent=t;
+  document.querySelector('[data-testid=order-ticket-order-type-select] ul').hidden=true;
+  document.getElementById('price').value = (t==='ЛИМИТ' && sym) ? window.LAST.toFixed(1) : '';}
+function send(){
+  const m=document.getElementById('placeholder-for-modals'); const q=document.getElementById('qty').value;
+  if(!q){m.innerHTML='<div class="popover-title">Order Qty should be specified</div>';return;}
+  const tpOn=document.querySelector('[data-testid=simple-tpsl-bracket-0-take-profit-checkbox-label]').classList.contains('checkbox-active');
+  const tp=(window.FAKE_TP_TICKS||+document.getElementById('tp').value)/10, sl=+document.getElementById('sl').value/10;
+  const buy=side==='Купить', opp=buy?'Продать':'Купить';
+  m.innerHTML='<div class="popover-content"><div>'+(tpOn?'['+opp+' '+q+' ЛИМИТ в MKT'+(buy?'+':'-')+tp.toFixed(1)+']':'')+'</div><h3>'+side+' '+q+' МКТ?</h3>'+
+    '<div>['+opp+' '+q+' СТОП в MKT'+(buy?'-':'+')+sl.toFixed(1)+']</div>'+
+    '<div class="btn-group-justified"><div class="btn-group"><div class="btn" onclick="confirmOrder('+q+','+tp+','+sl+')">'+side+'</div></div>'+
+    '<div class="btn-group"><div class="btn">Отменить</div></div></div></div>';
+}
+function confirmOrder(q,tp,sl){
+  document.getElementById('placeholder-for-modals').innerHTML='';
+  const o=document.getElementById('orders');
+  o.textContent = window.REJECT
+    ? '#1 '+side+' '+q+' '+sym+' МКТ - Отклонен - 0/1\nОтклонен Риском\nYour maximum order quantity has been met. Limit: 0 Current: 1'
+    : '#1 '+side+' '+q+' '+sym+' МКТ - Заполнен\nСТОП '+sl+' ЛИМИТ '+tp;
 }
 </script></body></html>"""
 
@@ -65,8 +102,6 @@ def ui(calibrated=True):
 
     u = json.loads(UI_FILE.read_text())
     u["calibrated"] = calibrated
-    u["price"] = ["#last-price"]
-    u["verify_steps"] = [{"do": "wait", "what": "SL", "sel": ["#orders:has-text('STOP {sl}')"], "timeout_ms": 3000}]
     return u
 
 
@@ -93,29 +128,48 @@ def test_full_browser_flow(server, tmp_path, monkeypatch):
     async def run():
         b = TradovateBrowser(s, ask_code, ui())
         try:
+            page = await b._get_page()
+            orders = lambda: page.inner_text("#orders")  # noqa: E731
+
+            # 1) to'liq oqim: login → xush kelibsiz → simulyatsiya → buyurtma → tasdiq → tekshiruv
             r = await b.execute(req())
             assert r.ok and r.executed, r.text
-            assert asked, "kod so'ralishi kerak edi"
-            page = await b._get_page()
-            assert await page.inner_text("#orders") == "Buy 2 MGCG7 STOP 3536.2 TARGET 3597.9"
+            assert await orders() == "#1 Купить 2 MGCG7 МКТ - Заполнен\nСТОП 24.8 ЛИМИТ 36.9"
+            assert await page.input_value("#tp") == "369" and await page.input_value("#sl") == "248"
             assert r.screenshot and r.screenshot[:4] == b"\x89PNG"
 
-            # narx qochib ketgan — buyurtma yuborilmaydi
+            # 2) SELL
+            r = await b.execute(req(side="SELL", entry=3561.0, sl=3575.0, tp=3541.4, contracts=1))
+            assert r.ok, r.text
+            assert (await orders()).startswith("#1 Продать 1 MGCG7")
+
+            # 3) narx qochib ketgan — buyurtma yuborilmaydi
+            await page.evaluate("document.getElementById('orders').textContent=''")
             r = await b.execute(req(entry=3540.0))
-            assert not r.ok and "qochgan" in r.text
+            assert not r.ok and "qochgan" in r.text and await orders() == ""
 
-            # SL tasdiqlanmadi — bot pozitsiyani avtomatik yopishi kerak
+            # 4) Tradeify rad etdi (Limit: 0) — pozitsiya yo'q, yopishga urinmaydi
+            await page.evaluate("window.REJECT=true")
             r = await b.execute(req())
-            assert r.ok
-            b.ui["order_steps"][2]["value"] = "BADSL"
-            r = await b.execute(req())
-            assert not r.ok and "yopildi" in r.text
-            assert await page.inner_text("#orders") == "FLAT"
+            assert not r.ok and "rad etdi" in r.text and "Limit: 0" in r.text
+            assert "Заполнен" not in await orders() and await orders() != "FLAT"
+            await page.evaluate("window.REJECT=false")
 
-            # boshqa hisob ko'rinsa — bitim ochilmaydi
+            # 5) tasdiqlash oynasida TP noto'g'ri — tasdiqlanmaydi
+            await page.evaluate("window.FAKE_TP_TICKS=10; document.getElementById('orders').textContent=''")
+            r = await b.execute(req())
+            assert not r.ok and "tasdiqlash oynasi" in r.text and await orders() == ""
+            await page.evaluate("window.FAKE_TP_TICKS=null; document.getElementById('placeholder-for-modals').innerHTML=''")
+
+            # 6) boshqa hisob ko'rinsa — bitim ochilmaydi
             b.s = Settings(**{**s.__dict__, "tradovate_account": "BOSHQA-HISOB"})
             r = await b.execute(req())
             assert not r.ok and "hisobi ko'rinmayapti" in r.text
+            b.s = s
+
+            # 7) favqulodda yopish
+            r = await b.flatten()
+            assert r.ok and await orders() == "FLAT"
         finally:
             await b.close()
 

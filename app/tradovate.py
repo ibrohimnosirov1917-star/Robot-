@@ -31,6 +31,10 @@ class ExecError(Exception):
     pass
 
 
+class Rejected(ExecError):
+    """Tradovate/Tradeify buyurtmani rad etdi — pozitsiya ochilmagan."""
+
+
 def load_ui(path: Path = UI_FILE) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -57,9 +61,16 @@ def check_price(req: OrderRequest, price: float) -> str | None:
     return None
 
 
+def distances(req: OrderRequest, tick: float = 0.1) -> dict:
+    sl_pts, tp_pts = abs(req.entry - req.sl), abs(req.tp - req.entry)
+    return {"sl_ticks": int(round(sl_pts / tick)), "tp_ticks": int(round(tp_pts / tick)),
+            "sl_pts": f"{round(sl_pts / tick) * tick:.1f}", "tp_pts": f"{round(tp_pts / tick) * tick:.1f}"}
+
+
 def fill_template(value: str, req: OrderRequest) -> str:
     return value.format(symbol=req.symbol, qty=req.contracts, sl=f"{req.sl:.1f}", tp=f"{req.tp:.1f}",
-                        side=req.side, side_title=req.side.title(), side_lower=req.side.lower())
+                        side=req.side, side_title=req.side.title(), side_lower=req.side.lower(),
+                        **distances(req))
 
 
 class TradovateBrowser:
@@ -148,8 +159,9 @@ class TradovateBrowser:
             if not (self.s.tradovate_user and self.s.tradovate_pass):
                 raise ExecError("TRADOVATE_USERNAME va TRADOVATE_PASSWORD sozlanmagan")
             await user.fill(self.s.tradovate_user)
-            await (await self._must(lg["password"], "parol maydoni")).fill(self.s.tradovate_pass)
-            await (await self._must(lg["submit"], "Login tugmasi")).click()
+            pw = await self._must(lg["password"], "parol maydoni")
+            await pw.fill(self.s.tradovate_pass)
+            await pw.press("Enter")  # Google/Apple tugmalarini adashib bosmaslik uchun Enter bilan
             await asyncio.sleep(2)
         if await self._find(lg.get("captcha", []), 1500):
             raise ExecError("Tradovate 'robot emasman' tekshiruvini so'rayapti — bot buni o'tolmaydi")
@@ -165,6 +177,9 @@ class TradovateBrowser:
             else:
                 await code_box.press("Enter")
             await asyncio.sleep(2)
+        welcome = await self._find(lg.get("welcome_close", []), 2000)
+        if welcome is not None:
+            await welcome.click()
         env = await self._find(lg["env_select"], 4000)
         if env is not None:
             await env.click()
@@ -182,7 +197,10 @@ class TradovateBrowser:
     async def _read_price(self, req: OrderRequest) -> float:
         sels = [fill_template(s, req) for s in self.ui.get("price", [])]
         loc = await self._find(sels, 5000) if sels else None
-        price = parse_price(await loc.inner_text()) if loc is not None else None
+        price = None
+        if loc is not None:
+            tag = await loc.evaluate("e => e.tagName")
+            price = parse_price(await loc.input_value() if tag in ("INPUT", "TEXTAREA") else await loc.inner_text())
         if price is None:
             raise ExecError("Joriy narxni o'qib bo'lmadi")
         return price
@@ -203,8 +221,31 @@ class TradovateBrowser:
                     if await self._find(sels, 300):
                         raise ExecError(f"Kutilgan narsa yo'qolmadi: {what}")
                 continue
-            loc = await self._must(sels, what, int(step.get("timeout_ms", 8000)))
+            if step.get("optional"):
+                loc = await self._find(sels, int(step.get("timeout_ms", 1500)))
+                if loc is None:
+                    continue
+            else:
+                loc = await self._must(sels, what, int(step.get("timeout_ms", 8000)))
             if do == "wait":
+                continue
+            if do == "expect_text":
+                text = await loc.inner_text()
+                for needle in step.get("contains", []):
+                    n = fill_template(needle, req) if req else needle
+                    if n not in text:
+                        raise ExecError(f"{what}: '{n}' topilmadi (ekranda: {text[:120]!r})")
+                continue
+            if do == "ensure_class":
+                if step["cls"] not in ((await loc.get_attribute("class")) or "").split():
+                    await loc.click()
+                continue
+            if do == "fail_if_text":
+                text = await loc.inner_text()
+                first = next((ln for ln in text.splitlines() if ln.strip().startswith("#")), text[:200])
+                if any(w in first for w in step.get("words", [])):
+                    reason = next((ln for ln in text.splitlines() if "Limit" in ln or "rejected" in ln.lower()), first)
+                    raise Rejected(f"Tradovate buyurtmani rad etdi: {reason[:200]}")
                 continue
             if step.get("submit") and on_submit:
                 on_submit()
@@ -216,6 +257,11 @@ class TradovateBrowser:
                 await loc.fill(value)
                 if step.get("enter"):
                     await loc.press("Enter")
+            elif do == "type":
+                value = fill_template(step["value"], req) if req else step["value"]
+                await loc.click()
+                await loc.fill("")
+                await loc.press_sequentially(value, delay=60)
             elif do == "press":
                 await loc.press(step["key"])
             else:
@@ -252,6 +298,7 @@ class TradovateBrowser:
             try:
                 await self._ensure_ready()
                 await self._check_account()
+                await self._run(self.ui.get("prepare_steps", []), req)
                 price = await self._read_price(req)
                 problem = check_price(req, price)
                 if problem:
@@ -261,6 +308,8 @@ class TradovateBrowser:
                 await self._run(self.ui.get("verify_steps", []), req)
                 text = "\n".join([f"✅ <b>Bitim ochildi</b> (narx ~{fmt_price(price)})", *order_lines(req)])
                 return ExecutionResult(ok=True, executed=True, text=text, screenshot=await self.screenshot())
+            except Rejected as e:
+                return ExecutionResult(ok=False, executed=False, text=f"⛔ {e}", screenshot=await self.screenshot())
             except Exception as e:
                 log.exception("Bitim ochishda xato")
                 shot = await self.screenshot()
