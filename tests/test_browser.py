@@ -45,13 +45,15 @@ MOCK = r"""<!doctype html><html><head><meta charset="utf-8"></head><body>
     <div data-testid="simple-tpsl-bracket-0-stop-loss-input"><input id="sl" value="2"></div>
   </div>
   <div id="placeholder-for-modals"></div>
-  <div class="lm_tab" onclick="document.getElementById('orders').hidden=false">Ордера</div>
-  <div class="lm_content" id="orders" style="white-space:pre" hidden></div>
-  <button onclick="document.getElementById('orders').textContent='FLAT'">Exit at Mkt &amp; Cxl</button>
+  <div data-testid="order-history"><div data-testid="trading-ticket-header" id="orders" style="white-space:pre"></div>
+    <div data-testid="order-history-content" id="comment"></div></div>
+  <button data-testid="account-info-dropdown-toggle" onclick="document.getElementById('acct').hidden=false">TDFY-DEMO-1 ⌄</button>
+  <div id="acct" hidden><div class="risk-settings">Лимит Дневных Потерь $0 Позиции:+ <span id="npos">0</span>/- 0
+    <button class="btn btn-danger panic-button" onclick="flat()">Закрыть Все Позиции и Отменить</button></div></div>
 </div>
 <script>
 let side='Купить', otype='МАРКЕТ', sym='';
-window.LAST=3561.8; window.REJECT=false; window.FAKE_TP_TICKS=null;
+window.LAST=3561.8; window.REJECT=false; window.FAKE_TP_TICKS=null; window.NO_SL=false;
 function go(id){for(const d of ['login','welcome','env','trade'])document.getElementById(d).hidden=(d!==id);}
 function ta(i){const w=i.parentElement;w.classList.add('open');document.getElementById('ta-list').innerHTML='<li><a>'+i.value+'</a></li>';}
 function setType(t){otype=t;document.getElementById('type').textContent=t;
@@ -70,11 +72,20 @@ function send(){
 }
 function confirmOrder(q,tp,sl){
   document.getElementById('placeholder-for-modals').innerHTML='';
-  const o=document.getElementById('orders');
-  o.textContent = window.REJECT
-    ? '#1 '+side+' '+q+' '+sym+' МКТ - Отклонен - 0/1\nОтклонен Риском\nYour maximum order quantity has been met. Limit: 0 Current: 1'
-    : '#1 '+side+' '+q+' '+sym+' МКТ - Заполнен\nСТОП '+sl+' ЛИМИТ '+tp;
+  const o=document.getElementById('orders'), opp=side==='Купить'?'Продать':'Купить';
+  if(window.REJECT){
+    o.textContent='MGCG7\n#1 '+side+' '+q+' '+sym+' МКТ - Отклонен - 0/1';
+    document.getElementById('comment').textContent='Отклонен Риском Your maximum order quantity has been met. Limit: 0 Current: 1';
+    return;
+  }
+  const px=window.LAST, d=side==='Купить'?1:-1;
+  o.textContent='MGCG7\n#1 '+side+' '+q+' '+sym+' МКТ - Выполнен - '+q+'/'+q+'\nBrackets\n'+
+    (window.NO_SL?'':'#2 '+opp+' '+q+' '+sym+' СТОП в '+(px-d*sl).toFixed(1)+' - Рабочий - 0/'+q+'\n')+
+    '#3 '+opp+' '+q+' '+sym+' ЛИМИТ в '+(px+d*tp).toFixed(1)+' - Рабочий - 0/'+q;
+  document.getElementById('npos').textContent=q;
 }
+function flat(){document.getElementById('npos').textContent='0';document.getElementById('orders').textContent='FLAT';
+  document.getElementById('acct').hidden=true;}
 </script></body></html>"""
 
 
@@ -134,14 +145,14 @@ def test_full_browser_flow(server, tmp_path, monkeypatch):
             # 1) to'liq oqim: login → xush kelibsiz → simulyatsiya → buyurtma → tasdiq → tekshiruv
             r = await b.execute(req())
             assert r.ok and r.executed, r.text
-            assert await orders() == "#1 Купить 2 MGCG7 МКТ - Заполнен\nСТОП 24.8 ЛИМИТ 36.9"
+            assert "Купить 2 MGCG7 МКТ - Выполнен" in await orders() and "СТОП в 3537.0 - Рабочий" in await orders()
             assert await page.input_value("#tp") == "369" and await page.input_value("#sl") == "248"
             assert r.screenshot and r.screenshot[:4] == b"\x89PNG"
 
             # 2) SELL
             r = await b.execute(req(side="SELL", entry=3561.0, sl=3575.0, tp=3541.4, contracts=1))
             assert r.ok, r.text
-            assert (await orders()).startswith("#1 Продать 1 MGCG7")
+            assert "#1 Продать 1 MGCG7 МКТ - Выполнен" in await orders()
 
             # 3) narx qochib ketgan — buyurtma yuborilmaydi
             await page.evaluate("document.getElementById('orders').textContent=''")
@@ -152,7 +163,7 @@ def test_full_browser_flow(server, tmp_path, monkeypatch):
             await page.evaluate("window.REJECT=true")
             r = await b.execute(req())
             assert not r.ok and "rad etdi" in r.text and "Limit: 0" in r.text
-            assert "Заполнен" not in await orders() and await orders() != "FLAT"
+            assert "Выполнен" not in await orders() and await orders() != "FLAT"
             await page.evaluate("window.REJECT=false")
 
             # 5) tasdiqlash oynasida TP noto'g'ri — tasdiqlanmaydi
@@ -161,13 +172,20 @@ def test_full_browser_flow(server, tmp_path, monkeypatch):
             assert not r.ok and "tasdiqlash oynasi" in r.text and await orders() == ""
             await page.evaluate("window.FAKE_TP_TICKS=null; document.getElementById('placeholder-for-modals').innerHTML=''")
 
-            # 6) boshqa hisob ko'rinsa — bitim ochilmaydi
+            # 6) SL buyurtmasi ko'rinmadi — bot pozitsiyani avtomatik yopadi
+            await page.evaluate("window.NO_SL=true; document.getElementById('orders').textContent=''")
+            r = await b.execute(req())
+            assert not r.ok and "yopildi" in r.text and await orders() == "FLAT"
+            assert await page.inner_text("#npos") == "0"
+            await page.evaluate("window.NO_SL=false")
+
+            # 7) boshqa hisob ko'rinsa — bitim ochilmaydi
             b.s = Settings(**{**s.__dict__, "tradovate_account": "BOSHQA-HISOB"})
             r = await b.execute(req())
             assert not r.ok and "hisobi ko'rinmayapti" in r.text
             b.s = s
 
-            # 7) favqulodda yopish
+            # 8) favqulodda yopish
             r = await b.flatten()
             assert r.ok and await orders() == "FLAT"
         finally:

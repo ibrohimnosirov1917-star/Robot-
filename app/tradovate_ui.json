@@ -1,6 +1,6 @@
 {
-  "_izoh": "Tradovate web (trader.tradovate.com) — 2026-11-26 da Tradeify hisobida o'qilgan data-testid'lar. Sayt tilidan qat'i nazar ishlaydi. verify/flatten qadamlari birinchi haqiqiy bitimda tekshirilib, keyin calibrated=true qilinadi.",
-  "calibrated": false,
+  "_izoh": "Tradovate web (trader.tradovate.com) — 2026-11-26 da Tradeify hisobida haqiqiy sinov bitimi bilan tekshirilgan data-testid'lar. Sayt tilidan qat'i nazar ishlaydi (rus/ingliz).",
+  "calibrated": true,
   "login": {
     "user": [
       "#name-input"
@@ -218,18 +218,14 @@
   ],
   "verify_steps": [
     {
-      "do": "click",
-      "what": "Ордера bo'limi",
-      "sel": [
-        ".lm_tab:has-text('Ордера')",
-        ".lm_tab:has-text('Orders')"
-      ],
-      "pause": 1.5
+      "do": "sleep",
+      "sec": 1.5
     },
     {
       "do": "fail_if_text",
       "what": "rad etilganmi",
       "sel": [
+        "[data-testid='order-history']",
         ".lm_content:visible"
       ],
       "words": [
@@ -238,23 +234,60 @@
       ]
     },
     {
-      "do": "wait",
-      "what": "SL buyurtmasi (STOP) ishlayapti — TODO: birinchi haqiqiy bitimda aniqlanadi",
+      "do": "expect_lines",
+      "what": "kirish bajarildi, SL va TP ishlayapti",
       "sel": [
-        ".lm_content:visible:has-text('СТОП')",
-        ".lm_content:visible:has-text('STOP')"
+        "[data-testid='trading-ticket-header']",
+        ".lm_content:visible"
       ],
-      "timeout_ms": 8000
+      "patterns": [
+        "(МКТ|MKT).*(Выполнен|Filled)",
+        "(СТОП|STOP).*(Рабочий|Working)",
+        "(ЛИМИТ|LIMIT).*(Рабочий|Working)"
+      ],
+      "timeout_ms": 10000
     }
   ],
   "flatten_steps": [
     {
       "do": "click",
-      "what": "Exit at Mkt & Cxl — TODO: birinchi haqiqiy bitimda aniqlanadi",
+      "what": "hisob menyusi",
       "sel": [
-        "button:has-text('Exit at Mkt')",
-        "button:has-text('Выйти по рынку')"
-      ]
+        "[data-testid='account-info-dropdown-toggle']"
+      ],
+      "pause": 0.8
+    },
+    {
+      "do": "click",
+      "what": "Закрыть Все Позиции и Отменить",
+      "sel": [
+        ".panic-button"
+      ],
+      "pause": 1.0
+    },
+    {
+      "do": "click",
+      "optional": true,
+      "what": "yopishni tasdiqlash",
+      "sel": [
+        "#placeholder-for-modals .popover-content .btn-group-justified .btn-group >> nth=0",
+        "#placeholder-for-modals .btn-danger",
+        "#placeholder-for-modals .btn-primary"
+      ],
+      "timeout_ms": 3000,
+      "pause": 1.5
+    },
+    {
+      "do": "expect_lines",
+      "what": "pozitsiyalar 0",
+      "sel": [
+        ".risk-settings"
+      ],
+      "patterns": [
+        "(Позиции|Positions):\\s*\\+\\s*0\\s*/\\s*-\\s*0"
+      ],
+      "timeout_ms": 10000,
+      "any_visibility": true
     }
   ]
 }

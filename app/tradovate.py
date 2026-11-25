@@ -221,7 +221,13 @@ class TradovateBrowser:
                     if await self._find(sels, 300):
                         raise ExecError(f"Kutilgan narsa yo'qolmadi: {what}")
                 continue
-            if step.get("optional"):
+            if step.get("any_visibility"):
+                # Yopiq menyu ichidagi matnni ham o'qish uchun (ko'rinmasa ham)
+                page = await self._get_page()
+                loc = page.locator(sels[0]).first
+                if await loc.count() == 0:
+                    raise ExecError(f"Tradovate'da topilmadi: {what}")
+            elif step.get("optional"):
                 loc = await self._find(sels, int(step.get("timeout_ms", 1500)))
                 if loc is None:
                     continue
@@ -235,6 +241,19 @@ class TradovateBrowser:
                     n = fill_template(needle, req) if req else needle
                     if n not in text:
                         raise ExecError(f"{what}: '{n}' topilmadi (ekranda: {text[:120]!r})")
+                continue
+            if do == "expect_lines":
+                # Har bir naqsh (regex) ekrandagi kamida bitta qatorga mos kelishi kerak; vaqt tugaguncha qayta tekshiriladi
+                deadline = asyncio.get_running_loop().time() + float(step.get("timeout_ms", 8000)) / 1000
+                while True:
+                    raw = await (loc.text_content() if step.get("any_visibility") else loc.inner_text())
+                    lines = re.split(r"\n|(?=#\d)", raw or "")
+                    missing = [p for p in step["patterns"] if not any(re.search(p, ln) for ln in lines)]
+                    if not missing:
+                        break
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise ExecError(f"{what}: ekranda topilmadi ({', '.join(missing)})")
+                    await asyncio.sleep(0.5)
                 continue
             if do == "ensure_class":
                 if step["cls"] not in ((await loc.get_attribute("class")) or "").split():
