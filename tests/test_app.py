@@ -32,6 +32,9 @@ class FakeTelegram:
     async def send_photo(self, chat_id, photo, caption, reply_markup=None):
         return await self._ok("send_photo", chat_id=chat_id, photo=photo, caption=caption, reply_markup=reply_markup)
 
+    async def send_document(self, chat_id, data, filename, caption=""):
+        return await self._ok("send_document", chat_id=chat_id, data=data, filename=filename, caption=caption)
+
     async def edit_caption(self, chat_id, message_id, caption, reply_markup=None):
         return await self._ok("edit_caption", chat_id=chat_id, message_id=message_id, caption=caption, reply_markup=reply_markup)
 
@@ -69,6 +72,9 @@ class FakeLive:
     async def describe(self):
         return "fake"
 
+    async def screenshot(self):
+        return b"\x89PNG-tradovate"
+
     async def close(self):
         pass
 
@@ -90,9 +96,9 @@ PINE_PAYLOAD = {
 
 
 @pytest.fixture()
-def env():
+def env(tmp_path):
     tg = FakeTelegram()
-    app = create_app(settings(), tg)
+    app = create_app(settings(session_dir=str(tmp_path)), tg)
     with TestClient(app) as client:
         app.state.bot.run_inline = True
         yield client, tg, app
@@ -253,3 +259,73 @@ def test_price_checks():
     assert "qochgan" in check_price(REQ, 3575.0)
     assert "oralig'ida emas" in check_price(REQ, 3530.0)
     assert fill_template("{side_title} {qty} {symbol} {sl}", REQ) == "Buy 2 MGCG7 3536.2"
+
+
+# ───────── jurnal: natija (TP/SL) ─────────
+def exit_payload(**kw):
+    p = {"v": 1, "event": "exit", "symbol": "MGC1!", "tf_sec": 300, "side": "SELL", "entry": 3543.21, "exit": 3518.49,
+         "sl": 3560.87, "tp": 3518.49, "result": "TP", "entry_time": 1795598700000, "time": 1795598700000 + 6 * 300_000,
+         "o": [3550 - i for i in range(12)], "h": [3552 - i for i in range(12)],
+         "l": [3540 - i for i in range(12)], "c": [3549 - i for i in range(12)]}
+    p.update(kw)
+    return p
+
+
+def test_exit_after_approval_sends_chart_and_records(env):
+    client, tg, app = env
+    sid = post_signal(client)
+    press(client, app, f"a:{sid}")
+    r = client.post("/tv/" + SECRET, content=json.dumps(exit_payload()))
+    assert r.status_code == 200 and r.json() == {"ok": True, "id": sid, "result": "TP"}
+    call = tg.last("send_photo")
+    assert call["photo"][:8] == b"\x89PNG\r\n\x1a\n"
+    cap = call["caption"]
+    assert "TP" in cap and "+24.7 punkt" in cap and "+1.4R" in cap and "Ruxsat berilgan edi" in cap and "$+247" in cap
+    t = app.state.bot.journal.trades[sid]
+    assert t.result == "TP" and t.decision == "SELL" and t.executed is False
+
+
+def test_exit_of_skipped_signal_and_stats(env):
+    client, tg, app = env
+    sid = post_signal(client)
+    press(client, app, f"x:{sid}")
+    client.post("/tv/" + SECRET, content=json.dumps(exit_payload(result="SL", exit=3560.87)))
+    assert "o'tkazib yuborgan" in tg.last("send_photo")["caption"] and "-1.0R" in tg.last("send_photo")["caption"]
+    # ikkinchi signal — ruxsat + live (soxta) ijro + TP
+    app.state.bot.executor = FakeLive()
+    sid2 = post_signal(client)
+    press(client, app, f"a:{sid2}")
+    client.post("/tv/" + SECRET, content=json.dumps(exit_payload()))
+    photos = [c[1] for c in tg.calls if c[0] == "send_photo"]
+    assert "Hisobda: 1 MGC" in photos[-2]["caption"] and photos[-1]["caption"] == "📸 Tradovate holati"
+    say(client, app, "/stats")
+    st = tg.last("send_message")["text"]
+    assert "Signallar: 2" in st and "O'tkazib yuborilgan: 1 ta · TP 0 / SL 1" in st and "haqiqatan ochilgan: 1 ta · TP 1" in st
+    say(client, app, "/jurnal")
+    doc = tg.last("send_document")
+    text = doc["data"].decode("utf-8-sig")
+    assert doc["filename"] == "jurnal.csv" and text.count("\n") == 3 and "SKIP" in text and ",TP," in text
+
+
+def test_journal_survives_restart(tmp_path):
+    from app.journal import Journal
+
+    tg = FakeTelegram()
+    app = create_app(settings(session_dir=str(tmp_path)), tg)
+    with TestClient(app) as client:
+        app.state.bot.run_inline = True
+        sid = post_signal(client)
+        press(client, app, f"a:{sid}")
+    j = Journal(str(tmp_path / "journal.jsonl"))
+    assert j.trades[sid].decision == "SELL" and j.find_open("SELL", 3543.21).id == sid
+    # qayta ishga tushgandan keyin ham natija mos signalga yoziladi
+    app2 = create_app(settings(session_dir=str(tmp_path)), FakeTelegram())
+    with TestClient(app2) as client2:
+        r = client2.post("/tv/" + SECRET, content=json.dumps(exit_payload()))
+        assert r.json()["id"] == sid
+
+
+def test_exit_without_signal(env):
+    client, tg, _ = env
+    r = client.post("/tv/" + SECRET, content=json.dumps(exit_payload()))
+    assert r.json()["id"] is None and "topilmadi" in tg.last("send_photo")["caption"]

@@ -32,6 +32,10 @@ class Telegram:
                                              "reply_markup": reply_markup},
                                files={"photo": ("signal.png", photo, "image/png")})
 
+    async def send_document(self, chat_id, data: bytes, filename: str, caption: str = "") -> dict:
+        return await self.call("sendDocument", {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
+                               files={"document": (filename, data, "text/csv")})
+
     async def edit_caption(self, chat_id, message_id: int, caption: str, reply_markup: dict | None = None) -> dict:
         return await self.call("editMessageCaption", {"chat_id": chat_id, "message_id": message_id, "caption": caption,
                                                       "parse_mode": "HTML", "reply_markup": reply_markup})
@@ -52,6 +56,8 @@ class Telegram:
             {"command": "start", "description": "Botni ishga tushirish va chat ID"},
             {"command": "test", "description": "Namunaviy signal yuborish"},
             {"command": "status", "description": "Bot holati va bugungi bitimlar"},
+            {"command": "stats", "description": "Jurnal statistikasi (masalan /stats 30)"},
+            {"command": "jurnal", "description": "Jurnalni CSV fayl qilib yuborish"},
             {"command": "login", "description": "Tradovate'ga ulanish (skrinshot bilan)"},
             {"command": "screen", "description": "Tradovate oynasining skrinshoti"},
             {"command": "flat", "description": "Barcha pozitsiyalarni yopish (favqulodda)"},

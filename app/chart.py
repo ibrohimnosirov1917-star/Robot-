@@ -17,11 +17,14 @@ UP, DOWN = "#26a69a", "#ef5350"
 TP_FILL, SL_FILL = "#c8e6c9", "#ffcdd2"
 
 
-def render_chart(sig: Signal, tz_name: str = "Asia/Tashkent") -> bytes | None:
+def render_chart(sig: Signal, tz_name: str = "Asia/Tashkent", exit_price: float | None = None,
+                 entry_idx: int | None = None, result: str | None = None) -> bytes | None:
+    """exit_price berilsa — yopilgan bitim rasmi: kirishdan chiqishgacha zona va natija belgisi."""
     if not sig.candles:
         return None
     o, h, l, c = (sig.candles[k] for k in ("o", "h", "l", "c"))
     n = len(c)
+    closed = exit_price is not None
     future = max(8, n // 4)
 
     fig, ax = plt.subplots(figsize=(10, 5.6), dpi=110)
@@ -29,7 +32,11 @@ def render_chart(sig: Signal, tz_name: str = "Asia/Tashkent") -> bytes | None:
     ax.set_facecolor("white")
 
     # Pozitsiya zonasi (TradingView "Long/Short position" ko'rinishida)
-    x0, w = n - 1, future
+    if closed:
+        x0 = max(0, min(entry_idx if entry_idx is not None else n - 1, n - 1))
+        w = max(1, n - 1 - x0)
+    else:
+        x0, w = n - 1, future
     ax.add_patch(Rectangle((x0, min(sig.entry, sig.tp)), w, abs(sig.tp - sig.entry), color=TP_FILL, alpha=0.8, zorder=0))
     ax.add_patch(Rectangle((x0, min(sig.entry, sig.sl)), w, abs(sig.sl - sig.entry), color=SL_FILL, alpha=0.8, zorder=0))
 
@@ -51,9 +58,20 @@ def render_chart(sig: Signal, tz_name: str = "Asia/Tashkent") -> bytes | None:
         ax.text(xr + 0.3, y, label, va="center", ha="left", fontsize=9, color="white",
                 bbox=dict(boxstyle="round,pad=0.25", fc=col, ec="none"), zorder=5)
 
+    # Natija belgisi (yopilgan bitim)
+    if closed:
+        win = result == "TP"
+        col = "#2e7d32" if win else "#c62828"
+        ax.plot([x0], [sig.entry], marker="o", color="#455a64", markersize=7, zorder=7)
+        ax.plot([n - 1], [exit_price], marker="X", color=col, markersize=11, zorder=7)
+        ax.annotate(("TP ✓ " if win else "SL ✗ ") + fmt_price(exit_price), xy=(n - 1, exit_price),
+                    xytext=(n - 1 - max(3, n // 8), exit_price), va="center", ha="right", fontsize=10, fontweight="bold",
+                    color="white", bbox=dict(boxstyle="round,pad=0.3", fc=col, ec="none"),
+                    arrowprops=dict(arrowstyle="-|>", color=col), zorder=8)
     # Signal belgisi
-    marker_y = h[-1] if sig.side == "SELL" else l[-1]
-    ax.annotate(sig.side, xy=(n - 1, marker_y), xytext=(n - 1, marker_y + (1 if sig.side == "SELL" else -1) * (max(h) - min(l)) * 0.08),
+    marker_x = x0 if closed else n - 1
+    marker_y = h[marker_x] if sig.side == "SELL" else l[marker_x]
+    ax.annotate(sig.side, xy=(marker_x, marker_y), xytext=(marker_x, marker_y + (1 if sig.side == "SELL" else -1) * (max(h) - min(l)) * 0.08),
                 ha="center", fontsize=9, fontweight="bold", color=DOWN if sig.side == "SELL" else UP,
                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.9),
                 arrowprops=dict(arrowstyle="-|>", color=DOWN if sig.side == "SELL" else UP), zorder=6)
@@ -80,7 +98,10 @@ def render_chart(sig: Signal, tz_name: str = "Asia/Tashkent") -> bytes | None:
         ax.set_xticks([])
 
     icon = "BUY" if sig.side == "BUY" else "SELL"
-    ax.set_title(f"{sig.symbol} {tf_label(sig.tf_sec)} · {icon} · {sig.rr:.1f}R", fontsize=11, loc="left")
+    title = f"{sig.symbol} {tf_label(sig.tf_sec)} · {icon} · {sig.rr:.1f}R"
+    if closed:
+        title += f" · {'TP' if result == 'TP' else 'SL'}"
+    ax.set_title(title, fontsize=11, loc="left")
     fig.tight_layout()
 
     buf = io.BytesIO()

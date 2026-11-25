@@ -187,6 +187,24 @@ if newDay
     tradesToday := 0
     dayR := 0.0
 
+// Bitim yopilganda (TP/SL) Telegram jurnali uchun JSON xabar
+f_n2(float x) =>
+    str.tostring(x, "#.##")
+
+f_exitMsg(bool isLong, float eP, float xP, float sl, float tp, bool win, int eTime) =>
+    string o = ""
+    string h = ""
+    string l = ""
+    string c = ""
+    n = math.min(alertBars, bar_index + 1)
+    for k = n - 1 to 0
+        sep = k == 0 ? "" : ","
+        o := o + f_n2(open[k]) + sep
+        h := h + f_n2(high[k]) + sep
+        l := l + f_n2(low[k]) + sep
+        c := c + f_n2(close[k]) + sep
+    '{"v":1,"event":"exit","symbol":"' + syminfo.ticker + '","tf_sec":' + str.tostring(timeframe.in_seconds()) + ',"side":"' + (isLong ? "BUY" : "SELL") + '","entry":' + f_n2(eP) + ',"exit":' + f_n2(xP) + ',"sl":' + f_n2(sl) + ',"tp":' + f_n2(tp) + ',"result":"' + (win ? "TP" : "SL") + '","entry_time":' + str.tostring(eTime) + ',"time":' + str.tostring(time) + ',"o":[' + o + '],"h":[' + h + '],"l":[' + l + '],"c":[' + c + ']}'
+
 if strategy.closedtrades > lastClosed
     for i = lastClosed to strategy.closedtrades - 1
         pr = strategy.closedtrades.profit(i)
@@ -206,6 +224,8 @@ if strategy.closedtrades > lastClosed
         dayR += pr / riskUsd
         if pr < 0
             blockedSess := sessId
+        if sendAlerts
+            alert(f_exitMsg(isLong, eP, strategy.closedtrades.exit_price(i), lastStop, lastTp, win, strategy.closedtrades.entry_time(i)), alert.freq_once_per_bar_close)
         exitDir := isLong ? 1 : -1
         exitBar := xB
         extSinceExit := isLong ? high : low
