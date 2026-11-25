@@ -22,6 +22,9 @@ from .telegram import Telegram
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bot")
+# httpx so'rov URL'ini (ichida bot tokeni bor) logga yozmasin
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 MAX_SIGNALS = 300
 
