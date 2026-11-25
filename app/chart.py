@@ -55,6 +55,7 @@ def render_chart(sig: Signal, tz_name: str = "Asia/Tashkent") -> bytes | None:
     marker_y = h[-1] if sig.side == "SELL" else l[-1]
     ax.annotate(sig.side, xy=(n - 1, marker_y), xytext=(n - 1, marker_y + (1 if sig.side == "SELL" else -1) * (max(h) - min(l)) * 0.08),
                 ha="center", fontsize=9, fontweight="bold", color=DOWN if sig.side == "SELL" else UP,
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.9),
                 arrowprops=dict(arrowstyle="-|>", color=DOWN if sig.side == "SELL" else UP), zorder=6)
 
     # O'qlar
