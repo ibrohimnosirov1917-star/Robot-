@@ -70,7 +70,9 @@ aks holda har deploy'dan keyin bot kodni qayta so'raydi.
 - `/status` — rejim, kontrakt, bugungi bitimlar
 - `/login` — Tradovate'ga ulanish (skrinshot bilan). Kod so'ralsa — kodni chatga yozing
 - `/screen` — Tradovate oynasining hozirgi skrinshoti
-- `/flat` — barcha pozitsiya va buyurtmalarni yopish (tasdiq bilan)
+- `/flat` — barcha pozitsiya va buyurtmalarni yopish (tasdiq bilan). Bitim ochilgan xabardagi **🔒 Bitimni hozir yopish** tugmasi ham shu ishni qiladi
+- `/stats [kun]` — jurnal statistikasi; `/jurnal` — CSV fayl
+- `/eslatma` — to'lov va muddatlar (`REMINDERS` o'zgaruvchisi: `2026-12-25=Matn; ...`)
 
 ## TradingView alert
 

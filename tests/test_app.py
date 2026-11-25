@@ -75,6 +75,9 @@ class FakeLive:
     async def screenshot(self):
         return b"\x89PNG-tradovate"
 
+    async def flatten(self):
+        return ExecutionResult(ok=True, executed=True, text="✅ Barcha pozitsiya va buyurtmalar yopildi.")
+
     async def close(self):
         pass
 
@@ -348,3 +351,24 @@ def test_eslatma_command(tmp_path):
     with TestClient(app) as client:
         say(client, app, "/eslatma")
         assert "Railway to'lovi — 01.01.2030" in tg.last("send_message")["text"]
+
+
+def test_close_button_after_execution(env):
+    client, tg, app = env
+    app.state.bot.executor = FakeLive()
+    sid = post_signal(client)
+    press(client, app, f"a:{sid}")
+    kb = tg.last("send_message")["reply_markup"]["inline_keyboard"]
+    assert kb[0][0]["callback_data"] == "f:ask"
+    press(client, app, "f:ask")
+    assert "yopaymi" in tg.last("send_message")["text"]
+    press(client, app, "f:yes")
+    assert "yopildi" in tg.last("send_message")["text"]
+    t = app.state.bot.journal.trades[sid]
+    assert t.result == "QO'LDA"
+    # strategiya keyin TP desa — qo'lda yopilgan bitimga yoziladi, lekin natija o'zgarmaydi
+    client.post("/tv/" + SECRET, content=json.dumps(exit_payload()))
+    assert "qo'lda yopgan" in tg.last("send_photo")["caption"]
+    assert t.result == "QO'LDA" and t.extra["strategy_result"] == "TP"
+    say(client, app, "/stats")
+    assert "Qo'lda yopilgan: 1 ta" in tg.last("send_message")["text"]

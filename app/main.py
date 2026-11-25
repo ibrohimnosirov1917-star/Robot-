@@ -125,11 +125,16 @@ async def publish_signal(state: State, sig: Signal) -> dict:
     return res
 
 
-async def send_result(state: State, chat_id, result: ExecutionResult) -> None:
+CLOSE_KB = {"inline_keyboard": [[{"text": "🔒 Bitimni hozir yopish", "callback_data": "f:ask"}]]}
+CONFIRM_KB = {"inline_keyboard": [[{"text": "Ha, hammasini yopish", "callback_data": "f:yes"},
+                                   {"text": "Yo'q", "callback_data": "f:no"}]]}
+
+
+async def send_result(state: State, chat_id, result: ExecutionResult, reply_markup: dict | None = None) -> None:
     if result.screenshot:
-        await state.tg.send_photo(chat_id, result.screenshot, result.text[:1000])
+        await state.tg.send_photo(chat_id, result.screenshot, result.text[:1000], reply_markup)
     else:
-        await state.tg.send_message(chat_id, result.text)
+        await state.tg.send_message(chat_id, result.text, reply_markup)
 
 
 async def send_reminders(state: State) -> int:
@@ -286,9 +291,7 @@ async def handle_message(state: State, msg: dict) -> None:
             await tg.send_message(chat_id, "⏰ <b>Muddatlar:</b>\n" + "\n".join(
                 f"• {t} — {d:%d.%m.%Y} ({(d - today).days} kun qoldi)" for d, t in sorted(items)))
     elif cmd.startswith("/flat"):
-        await tg.send_message(chat_id, "⚠️ Barcha ochiq pozitsiya va buyurtmalarni yopaymi?",
-                              {"inline_keyboard": [[{"text": "Ha, hammasini yopish", "callback_data": "f:yes"},
-                                                    {"text": "Yo'q", "callback_data": "f:no"}]]})
+        await tg.send_message(chat_id, "⚠️ Barcha ochiq pozitsiya va buyurtmalarni yopaymi?", CONFIRM_KB)
 
 
 async def _login(state: State, chat_id) -> None:
@@ -301,12 +304,17 @@ async def _execute(state: State, chat_id, req: OrderRequest) -> None:
     if result.executed:
         day = state.today()
         state.trades_by_day[day] = state.trades_by_day.get(day, 0) + 1
-    await send_result(state, chat_id, result)
+    await send_result(state, chat_id, result, CLOSE_KB if result.executed else None)
     log.info("Signal %s: ijro ok=%s executed=%s", req.signal_id, result.ok, result.executed)
 
 
 async def _flatten(state: State, chat_id) -> None:
-    await send_result(state, chat_id, await state.executor.flatten())
+    result = await state.executor.flatten()
+    if result.ok:
+        for t in state.journal.trades.values():
+            if t.executed and t.result is None:
+                state.journal.record_manual_close(t.id)
+    await send_result(state, chat_id, result)
 
 
 async def handle_exit(state: State, payload: dict) -> dict:
@@ -320,6 +328,7 @@ async def handle_exit(state: State, payload: dict) -> dict:
         raise HTTPException(400, f"noto'g'ri exit xabari: {e}")
     result = "TP" if str(payload.get("result", "")).upper() == "TP" else "SL"
     trade = state.journal.find_open(side, entry)
+    manual = trade is not None and trade.result == "QO'LDA"
     if trade is not None:
         state.journal.record_exit(trade.id, result, exit_px)
         trade = state.journal.trades[trade.id]
@@ -347,7 +356,9 @@ async def handle_exit(state: State, payload: dict) -> dict:
         lines.append("ℹ️ Jurnalda mos signal topilmadi (bot ishga tushishidan oldingi bitim bo'lishi mumkin).")
     else:
         usd = trade.usd(s.point_value) or 0
-        if trade.executed:
+        if manual:
+            lines.append("🔒 Siz bu bitimni oldinroq qo'lda yopgan edingiz — yuqoridagi natija strategiya bo'yicha.")
+        elif trade.executed:
             lines.append(f"💰 Hisobda: {trade.contracts} MGC · <b>${usd:+,.0f}</b> (taxminan, haqiqiy kirish narxi farq qilishi mumkin)")
         elif trade.taken:
             lines.append(f"🧪 Ruxsat berilgan edi, lekin bitim ochilmagan. Ochilganda: {trade.contracts} MGC · ${usd:+,.0f}")
@@ -363,7 +374,7 @@ async def handle_exit(state: State, payload: dict) -> dict:
             await state.tg.send_photo(s.chat_id, png, caption)
         else:
             await state.tg.send_message(s.chat_id, caption)
-        if trade is not None and trade.executed and state.executor.live:
+        if trade is not None and trade.executed and not manual and state.executor.live:
             shot = await state.executor.screenshot()
             if shot:
                 await state.tg.send_photo(s.chat_id, shot, "📸 Tradovate holati")
@@ -393,7 +404,10 @@ async def handle_callback(state: State, cq: dict) -> None:
         return
 
     if action == "f":
-        if sid == "yes":
+        if sid == "ask":
+            await tg.answer_callback(cq["id"])
+            await tg.send_message(chat_id, "⚠️ Barcha ochiq pozitsiya va buyurtmalarni bozor narxida yopaymi?", CONFIRM_KB)
+        elif sid == "yes":
             await tg.answer_callback(cq["id"], "Yopilmoqda…")
             await _run_or_spawn(state, _flatten(state, chat_id))
         else:

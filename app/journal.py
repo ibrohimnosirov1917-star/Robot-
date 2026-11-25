@@ -106,6 +106,9 @@ class Journal:
     def record_exec(self, sid: str, executed: bool, note: str) -> None:
         self._append({"type": "exec", "id": sid, "executed": executed, "note": note[:300]})
 
+    def record_manual_close(self, sid: str) -> None:
+        self._append({"type": "manual_close", "id": sid})
+
     def record_exit(self, sid: str, result: str, exit_price: float) -> None:
         self._append({"type": "exit", "id": sid, "result": result, "exit": exit_price})
 
@@ -126,7 +129,12 @@ class Journal:
         elif t == "exec":
             tr.executed = bool(rec.get("executed"))
             tr.exec_note = rec.get("note", "")
+        elif t == "manual_close":
+            tr.result = "QO'LDA"
         elif t == "exit":
+            if tr.result == "QO'LDA":  # qo'lda yopilgan: strategiya natijasi alohida saqlanadi
+                tr.extra["strategy_result"] = rec["result"]
+                return
             tr.result = rec["result"]
             tr.exit_price = float(rec["exit"])
             tr.exit_ts = float(rec["ts"])
@@ -144,7 +152,8 @@ class Journal:
     def find_open(self, side: str, entry: float, tol: float = 0.06) -> Trade | None:
         """Yopilish xabariga mos (hali natijasi yo'q) eng so'nggi signal."""
         cands = [t for t in self.trades.values()
-                 if t.result is None and t.side == side and abs(t.entry - entry) <= tol]
+                 if (t.result is None or (t.result == "QO'LDA" and "strategy_result" not in t.extra))
+                 and t.side == side and abs(t.entry - entry) <= tol]
         return max(cands, key=lambda t: t.signal_ts) if cands else None
 
     # ───────── hisobot ─────────
@@ -154,7 +163,8 @@ class Journal:
     def stats_text(self, point_value: float, days: int | None = None) -> str:
         since = time.time() - days * 86400 if days else 0
         all_t = [t for t in self.trades.values() if t.signal_ts >= since]
-        closed = [t for t in all_t if t.result]
+        closed = [t for t in all_t if t.result in ("TP", "SL")]
+        manual = [t for t in all_t if t.result == "QO'LDA"]
         taken = [t for t in closed if t.taken]
         skipped = [t for t in closed if t.decision == "SKIP"]
         unanswered = [t for t in closed if t.decision is None]
@@ -169,11 +179,12 @@ class Journal:
 
         period = f"oxirgi {days} kun" if days else "butun davr"
         out = [f"📊 <b>Jurnal</b> ({period})", "",
-               f"Signallar: {len(all_t)} · yopilgan: {len(closed)} · ochiq: {len(all_t) - len(closed)}", "",
+               f"Signallar: {len(all_t)} · yopilgan: {len(closed) + len(manual)} · ochiq: {len(all_t) - len(closed) - len(manual)}", "",
                f"🟢 Ruxsat berilgan: {line(taken)}",
                f"   ↳ haqiqatan ochilgan: {line([t for t in taken if t.executed])}",
                f"⏭ O'tkazib yuborilgan: {line(skipped)}",
-               f"🤷 Javobsiz qolgan: {line(unanswered)}", "",
+               f"🤷 Javobsiz qolgan: {line(unanswered)}",
+               f"🔒 Qo'lda yopilgan: {len(manual)} ta", "",
                "<b>Sessiyalar bo'yicha (barcha signallar):</b>"]
         for sess in ("Asia", "London", "NY"):
             out.append(f"{sess}: {line([t for t in closed if t.session() == sess])}")
