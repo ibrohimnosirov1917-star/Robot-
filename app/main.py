@@ -14,6 +14,7 @@ import os
 import re
 from collections import OrderedDict
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request
@@ -34,6 +35,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 MAX_SIGNALS = 300
+NO_REF_TTL_MIN = 5  # XAUUSD signalida MGC narxi olinmagan bo'lsa — faqat shuncha daqiqa ichida ochiladi
 CODE_WAIT_SEC = 300
 _CODE_RE = re.compile(r"^(?:/kod\s+)?([A-Za-z0-9]{4,10})$")
 
@@ -122,7 +124,17 @@ async def publish_signal(state: State, sig: Signal) -> dict:
     if res.get("ok"):
         state.messages[sig.id] = (s.chat_id, res["result"]["message_id"], caption, bool(png))
     log.info("Signal %s %s yuborildi (ok=%s)", sig.id, sig.side, res.get("ok"))
+    if state.executor.live and not is_futures_symbol(sig.symbol):
+        await _run_or_spawn(state, _remember_ref_price(state, sig))
     return res
+
+
+async def _remember_ref_price(state: State, sig: Signal) -> None:
+    """XAUUSD signali kelgan zahoti MGC narxini eslab qolamiz — Ruxsat bosilganda narx qochmaganini shu bilan tekshiramiz."""
+    price = await state.executor.quote(state.contract())
+    if price is not None:
+        sig.ref_price = price
+        log.info("Signal %s: MGC narxi %.1f (XAUUSD %.2f, farq %+.1f)", sig.id, price, sig.entry, price - sig.entry)
 
 
 CLOSE_KB = {"inline_keyboard": [[{"text": "🔒 Bitimni hozir yopish", "callback_data": "f:ask"}]]}
@@ -384,6 +396,15 @@ async def handle_exit(state: State, payload: dict) -> dict:
 
 def build_order(state: State, sig: Signal, plan: Plan) -> OrderRequest:
     s = state.settings
+    if not is_futures_symbol(sig.symbol):
+        # XAUUSD signali → MGC: SL/TP masofasi saqlanadi, narx signal paytidagi MGC narxiga bog'lanadi
+        req = OrderRequest(signal_id=sig.id, side=sig.side, contracts=plan.contracts, entry=None, sl=0.0, tp=0.0,
+                           symbol=state.contract(), max_drift=float("inf"), relative=True,
+                           sl_dist=round_tick(sig.sl_dist, s.tick_size), tp_dist=round_tick(sig.tp_dist, s.tick_size))
+        if sig.ref_price is not None:
+            req = req.anchored(sig.ref_price)
+            req = replace(req, max_drift=s.max_drift_frac * sig.sl_dist)
+        return req
     return OrderRequest(
         signal_id=sig.id, side=sig.side, contracts=plan.contracts, entry=sig.entry,
         sl=round_tick(sig.sl, s.tick_size), tp=round_tick(sig.tp, s.tick_size), symbol=state.contract(),
@@ -432,8 +453,10 @@ async def handle_callback(state: State, cq: dict) -> None:
             problem = f"Signal {sig.age_min():.0f} daqiqa oldin chiqqan — eskirgan, bitim ochilmaydi."
         elif state.trades_today() >= s.max_trades_per_day:
             problem = f"Bugungi limit tugadi ({s.max_trades_per_day} ta bitim)."
-        elif state.executor.live and not is_futures_symbol(sig.symbol):
-            problem = "Signal MGC1! grafigidan emas — narxlar Tradovate'ga to'g'ri kelmaydi."
+        elif (state.executor.live and not is_futures_symbol(sig.symbol) and sig.ref_price is None
+              and sig.age_min() > NO_REF_TTL_MIN):
+            problem = (f"Signal {sig.age_min():.0f} daqiqa oldin chiqqan va MGC narxi eslab qolinmagan — "
+                       "narx qochgan bo'lishi mumkin, bitim ochilmaydi.")
         if problem:
             await tg.answer_callback(cq["id"], problem, alert=True)
             return

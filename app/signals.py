@@ -40,6 +40,7 @@ class Signal:
     id: str = field(default_factory=lambda: secrets.token_hex(4))
     received_at: float = field(default_factory=time.time)
     decision: str | None = None  # "BUY" / "SELL" / "SKIP"
+    ref_price: float | None = None  # signal kelgan paytdagi MGC narxi (XAUUSD signali uchun)
 
     @classmethod
     def from_payload(cls, payload: dict) -> "Signal":
@@ -130,7 +131,7 @@ def signal_caption(sig: Signal, tz_name: str, plan) -> str:
     if plan.over_risk:
         lines.append(f"⚠️ SL katta: 1 kontraktning o'zi ${plan.risk_per_contract:,.0f} risk")
     if not is_futures_symbol(sig.symbol):
-        lines.append("⚠️ Signal fyuchers grafigidan emas — strategiyani <b>MGC1!</b> grafigiga qo'ying")
+        lines.append(f"ℹ️ Narxlar {sig.symbol} bo'yicha — bitim MGC'da shu SL/TP masofasi bilan ochiladi")
     lines += ["", "Bitimga ruxsat berasizmi? 👇"]
     return "\n".join(lines)
 

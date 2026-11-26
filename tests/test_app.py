@@ -62,8 +62,12 @@ class FakeLive:
     name = "live"
     live = True
 
-    def __init__(self):
+    def __init__(self, quote=None):
         self.orders = []
+        self._quote = quote
+
+    async def quote(self, symbol):
+        return self._quote
 
     async def execute(self, req):
         self.orders.append(req)
@@ -173,7 +177,7 @@ def test_signal_sent_with_contracts_and_buttons(env):
 def test_xauusd_signal_warns(env):
     client, tg, _ = env
     post_signal(client, dict(PINE_PAYLOAD, symbol="XAUUSD"))
-    assert "MGC1!" in tg.last("send_photo")["caption"]
+    assert "bitim MGC'da" in tg.last("send_photo")["caption"]
 
 
 def test_invalid_signal_rejected(env):
@@ -228,11 +232,29 @@ def test_live_flow_daily_limit_and_order(env):
     assert "limit" in tg.last("answer_callback")["text"] and len(fake.orders) == 5
 
 
-def test_live_refuses_non_futures_symbol(env):
+def test_live_xauusd_signal_anchored_to_mgc_price(env):
     client, tg, app = env
-    app.state.bot.executor = FakeLive()
-    press(client, app, f"a:{post_signal(client, dict(PINE_PAYLOAD, symbol='XAUUSD'))}")
-    assert "MGC1!" in tg.last("answer_callback")["text"] and not app.state.bot.executor.orders
+    app.state.bot.executor = FakeLive(quote=3601.0)
+    sid = post_signal(client, dict(PINE_PAYLOAD, symbol="XAUUSD"))
+    assert app.state.bot.signals[sid].ref_price == 3601.0
+    press(client, app, f"a:{sid}")
+    o = app.state.bot.executor.orders[0]
+    assert o.relative and o.entry == 3601.0 and (o.sl, o.tp) == (3618.7, 3576.3)
+    assert abs(o.max_drift - 0.3 * 17.66) < 1e-6 and (o.sl_dist, o.tp_dist) == (17.7, 24.7)
+
+
+def test_live_xauusd_without_mgc_price(env):
+    client, tg, app = env
+    app.state.bot.executor = FakeLive(quote=None)
+    sid = post_signal(client, dict(PINE_PAYLOAD, symbol="XAUUSD"))
+    press(client, app, f"a:{sid}")
+    o = app.state.bot.executor.orders[0]
+    assert o.entry is None and o.sl_dist == 17.7  # ijro paytidagi narxga bog'lanadi
+    # 5 daqiqadan eski va MGC narxi yo'q — ochilmaydi
+    sid2 = post_signal(client, dict(PINE_PAYLOAD, symbol="XAUUSD"))
+    app.state.bot.signals[sid2].received_at -= 6 * 60
+    press(client, app, f"a:{sid2}")
+    assert "eslab qolinmagan" in tg.last("answer_callback")["text"] and len(app.state.bot.executor.orders) == 1
 
 
 def test_status_and_stranger(env):

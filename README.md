@@ -74,9 +74,18 @@ aks holda har deploy'dan keyin bot kodni qayta so'raydi.
 - `/stats [kun]` — jurnal statistikasi; `/jurnal` — CSV fayl
 - `/eslatma` — to'lov va muddatlar (`REMINDERS` o'zgaruvchisi: `2026-12-25=Matn; ...`)
 
+## Signal manbai: XAUUSD (real vaqt) → bitim MGC'da
+
+TradingView'da COMEX (MGC1!) ma'lumoti obunasiz 10 daqiqa kechikadi, alert'lar ham kechikadi.
+Shuning uchun signal **XAUUSD 5m** (FOREX.com, real vaqt) grafigidan olinadi:
+- signal kelgan zahoti bot Tradovate'dan MGC narxini eslab qoladi;
+- Ruxsat bosilganda MGC narxi shu nuqtadan SL masofasining 30% idan ko'p qochgan bo'lsa — ochilmaydi;
+- SL/TP kirish narxidan signaldagi **punkt masofasi** bilan (tiklarda) qo'yiladi;
+- MGC narxini olib bo'lmasa — signal faqat 5 daqiqa ichida ochiladi.
+
 ## TradingView alert
 
-1. **MGC1!** grafigini oching (5m) va **Salom FVG Model — v0.8 (Telegram)** strategiyasini qo'shing.
+1. **XAUUSD** (FOREX.com) grafigini oching (5m) va **Salom FVG Model — v0.8 (Telegram)** strategiyasini qo'shing.
 2. **Alert** → *Condition*: shu strategiya → **alert() function calls only**.
 3. *Notifications* → **Webhook URL**: `https://<domeningiz>/tv/<WEBHOOK_SECRET>`
 

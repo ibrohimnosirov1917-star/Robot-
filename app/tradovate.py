@@ -62,7 +62,10 @@ def check_price(req: OrderRequest, price: float) -> str | None:
 
 
 def distances(req: OrderRequest, tick: float = 0.1) -> dict:
-    sl_pts, tp_pts = abs(req.entry - req.sl), abs(req.tp - req.entry)
+    if req.entry is None:
+        sl_pts, tp_pts = req.sl_dist, req.tp_dist
+    else:
+        sl_pts, tp_pts = abs(req.entry - req.sl), abs(req.tp - req.entry)
     return {"sl_ticks": int(round(sl_pts / tick)), "tp_ticks": int(round(tp_pts / tick)),
             "sl_pts": f"{round(sl_pts / tick) * tick:.1f}", "tp_pts": f"{round(tp_pts / tick) * tick:.1f}"}
 
@@ -333,6 +336,8 @@ class TradovateBrowser:
                 await self._check_account()
                 await self._run(self.ui.get("prepare_steps", []), req)
                 price = await self._read_price(req)
+                if req.entry is None:  # signal kelganda MGC narxi olinmagan — hozirgi narxga bog'laymiz
+                    req = req.anchored(price)
                 problem = check_price(req, price)
                 if problem:
                     return ExecutionResult(ok=False, executed=False, text=f"⛔ Bitim ochilmadi: {problem}.",
@@ -354,6 +359,19 @@ class TradovateBrowser:
                     f"🚨 Buyurtma yuborildi, lekin tekshiruvdan o'tmadi: {e}\n"
                     + ("Xavfsizlik uchun pozitsiya yopildi." if closed.ok else
                        "⚠️ Pozitsiyani avtomatik yopib bo'lmadi — Tradovate/TradingView'da DARHOL tekshiring!")))
+
+    async def quote(self, symbol: str) -> float | None:
+        """Signal kelgan paytdagi MGC narxi (XAUUSD signalini MGC'ga bog'lash uchun)."""
+        probe = OrderRequest(signal_id="quote", side="BUY", contracts=1, entry=None, sl=0, tp=0, symbol=symbol,
+                             max_drift=0)
+        async with self.lock:
+            try:
+                await self._ensure_ready()
+                await self._run(self.ui.get("prepare_steps", []), probe)
+                return await self._read_price(probe)
+            except Exception as e:
+                log.warning("MGC narxini olib bo'lmadi: %s", e)
+                return None
 
     async def _flatten_unlocked(self) -> ExecutionResult:
         try:

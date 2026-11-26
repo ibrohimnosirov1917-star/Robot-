@@ -187,7 +187,16 @@ def test_full_browser_flow(server, tmp_path, monkeypatch):
             assert not r.ok and "hisobi ko'rinmayapti" in r.text
             b.s = s
 
-            # 8) favqulodda yopish
+            # 8) XAUUSD signali: MGC narxini olish va masofa bo'yicha buyurtma
+            await page.evaluate("document.getElementById('orders').textContent=''")
+            assert await b.quote("MGCG7") == 3561.8
+            rel = req(entry=None, sl=0.0, tp=0.0, relative=True, sl_dist=24.8, tp_dist=36.9, max_drift=float("inf"))
+            r = await b.execute(rel)
+            assert r.ok and r.executed, r.text
+            assert await page.input_value("#tp") == "369" and await page.input_value("#sl") == "248"
+            assert "СТОП в 3537.0 - Рабочий" in await orders()
+
+            # 9) favqulodda yopish
             r = await b.flatten()
             assert r.ok and await orders() == "FLAT"
         finally:
