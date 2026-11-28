@@ -12,6 +12,7 @@ haqiqiy bitim OCHMAYDI.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -37,6 +38,12 @@ class Rejected(ExecError):
 
 def load_ui(path: Path = UI_FILE) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def short(e: Exception) -> str:
+    """Xato matni Telegram uchun: birinchi qator, qisqa va HTML belgilardan tozalangan."""
+    first = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+    return html.escape(first[:200], quote=False)
 
 
 def parse_price(text: str) -> float | None:
@@ -229,6 +236,15 @@ class TradovateBrowser:
             what = step.get("what", f"{i}-qadam")
             sels = [fill_template(s, req) if req else s for s in step.get("sel", [])]
             do = step["do"]
+            if do == "hide":
+                # Formani to'sib qo'yadigan ma'lumot panellarini (bildirishnomalarni) yashirish — savdoga ta'sir qilmaydi
+                page = await self._get_page()
+                n = await page.evaluate(
+                    "sels => { let n = 0; for (const s of sels) document.querySelectorAll(s).forEach(e => "
+                    "{ e.style.setProperty('display', 'none', 'important'); n++; }); return n; }", step["sel"])
+                if n:
+                    log.info("Yashirildi: %s ta ma'lumot paneli", n)
+                continue
             if do == "sleep":
                 await asyncio.sleep(float(step.get("sec", 0.5)))
                 continue
@@ -295,7 +311,7 @@ class TradovateBrowser:
                     await loc.press("Enter")
             elif do == "type":
                 value = fill_template(step["value"], req) if req else step["value"]
-                await loc.click()
+                await loc.focus()  # bosmasdan — ustida boshqa panel bo'lsa ham ishlaydi
                 await loc.fill("")
                 await loc.press_sequentially(value, delay=60)
             elif do == "press":
@@ -317,7 +333,7 @@ class TradovateBrowser:
                 return ExecutionResult(ok=True, executed=False, text="✅ Tradovate'ga ulandi.", screenshot=await self.screenshot())
             except Exception as e:
                 log.exception("Login xatosi")
-                return ExecutionResult(ok=False, executed=False, text=f"❌ Ulanib bo'lmadi: {e}", screenshot=await self.screenshot())
+                return ExecutionResult(ok=False, executed=False, text=f"❌ Ulanib bo'lmadi: {short(e)}", screenshot=await self.screenshot())
 
     async def execute(self, req: OrderRequest) -> ExecutionResult:
         if not self.ui.get("calibrated"):
@@ -347,16 +363,16 @@ class TradovateBrowser:
                 text = "\n".join([f"✅ <b>Bitim ochildi</b> (narx ~{fmt_price(price)})", *order_lines(req)])
                 return ExecutionResult(ok=True, executed=True, text=text, screenshot=await self.screenshot())
             except Rejected as e:
-                return ExecutionResult(ok=False, executed=False, text=f"⛔ {e}", screenshot=await self.screenshot())
+                return ExecutionResult(ok=False, executed=False, text=f"⛔ {short(e)}", screenshot=await self.screenshot())
             except Exception as e:
                 log.exception("Bitim ochishda xato")
                 shot = await self.screenshot()
                 if not sent:
-                    return ExecutionResult(ok=False, executed=False, text=f"❌ Bitim ochilmadi: {e}", screenshot=shot)
+                    return ExecutionResult(ok=False, executed=False, text=f"❌ Bitim ochilmadi: {short(e)}", screenshot=shot)
                 # Buyurtma yuborilgan, lekin SL/TP tasdiqlanmadi — xavfsizlik uchun hammasini yopamiz
                 closed = await self._flatten_unlocked()
                 return ExecutionResult(ok=False, executed=False, screenshot=await self.screenshot() or shot, text=(
-                    f"🚨 Buyurtma yuborildi, lekin tekshiruvdan o'tmadi: {e}\n"
+                    f"🚨 Buyurtma yuborildi, lekin tekshiruvdan o'tmadi: {short(e)}\n"
                     + ("Xavfsizlik uchun pozitsiya yopildi." if closed.ok else
                        "⚠️ Pozitsiyani avtomatik yopib bo'lmadi — Tradovate/TradingView'da DARHOL tekshiring!")))
 
@@ -381,7 +397,7 @@ class TradovateBrowser:
                                    screenshot=await self.screenshot())
         except Exception as e:
             log.exception("Yopishda xato")
-            return ExecutionResult(ok=False, executed=False, text=f"❌ Yopib bo'lmadi: {e}. Qo'lda tekshiring!",
+            return ExecutionResult(ok=False, executed=False, text=f"❌ Yopib bo'lmadi: {short(e)}. Qo'lda tekshiring!",
                                    screenshot=await self.screenshot())
 
     async def flatten(self) -> ExecutionResult:

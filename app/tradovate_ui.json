@@ -39,6 +39,14 @@
   },
   "prepare_steps": [
     {
+      "do": "hide",
+      "what": "ma'lumot panellarini yashirish",
+      "sel": [
+        "[class*='info-panel']",
+        ".notification-ticker-toast"
+      ]
+    },
+    {
       "do": "click",
       "optional": true,
       "what": "yordam oynachasini yopish",

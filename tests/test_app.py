@@ -394,3 +394,46 @@ def test_close_button_after_execution(env):
     assert t.result == "QO'LDA" and t.extra["strategy_result"] == "TP"
     say(client, app, "/stats")
     assert "Qo'lda yopilgan: 1 ta" in tg.last("send_message")["text"]
+
+
+def test_duplicate_exit_is_ignored(env):
+    client, tg, app = env
+    sid = post_signal(client)
+    press(client, app, f"x:{sid}")
+    n = len([c for c in tg.calls if c[0] == "send_photo"])
+    r1 = client.post("/tv/" + SECRET, content=json.dumps(exit_payload(result="SL", exit=3560.87))).json()
+    r2 = client.post("/tv/" + SECRET, content=json.dumps(exit_payload(result="SL", exit=3560.87))).json()
+    assert r1["id"] == sid and r2.get("duplicate") and r2["id"] == sid
+    assert len([c for c in tg.calls if c[0] == "send_photo"]) == n + 1
+
+
+def test_telegram_retries_and_html_fallback():
+    import asyncio
+    import httpx
+    from app.telegram import Telegram
+
+    seen = []
+
+    def handler(request):
+        body = request.content.decode()
+        seen.append(body)
+        if len(seen) == 1:
+            raise httpx.ConnectError("tarmoq yo'q")
+        if "parse_mode" in body:
+            return httpx.Response(200, json={"ok": False, "description": "Bad Request: can't parse entities"})
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
+
+    tg = Telegram("x", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    res = asyncio.run(tg.send_message(1, "❌ xato: <input value='MGCG7'> &amp; <b>qalin</b>"))
+    assert res["ok"] and len(seen) == 3
+    assert "parse_mode" not in seen[-1] and "%3Cinput" not in seen[-1] and "qalin" in seen[-1]
+
+
+def test_narx_command(env):
+    client, tg, app = env
+    app.state.bot.executor = FakeLive(quote=3605.7)
+    say(client, app, "/narx")
+    assert "3,605.70" in tg.last("send_photo")["caption"] and "tayyor" in tg.last("send_photo")["caption"]
+    app.state.bot.executor = FakeLive(quote=None)
+    say(client, app, "/narx")
+    assert "o'qib bo'lmadi" in tg.last("send_photo")["caption"]

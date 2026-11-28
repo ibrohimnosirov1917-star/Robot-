@@ -156,6 +156,17 @@ class Journal:
                  and t.side == side and abs(t.entry - entry) <= tol]
         return max(cands, key=lambda t: t.signal_ts) if cands else None
 
+    def find_closed_same(self, side: str, entry: float, exit_price: float, within_sec: float = 3600,
+                         tol: float = 0.06) -> Trade | None:
+        """Shu natija allaqachon yozilganmi (TradingView bir xabarni qayta yuborganda)."""
+        now = time.time()
+        for t in self.trades.values():
+            if (t.result in ("TP", "SL") and t.side == side and abs(t.entry - entry) <= tol
+                    and t.exit_price is not None and abs(t.exit_price - exit_price) <= tol
+                    and t.exit_ts and now - t.exit_ts <= within_sec):
+                return t
+        return None
+
     # ───────── hisobot ─────────
     def closed(self) -> list[Trade]:
         return sorted((t for t in self.trades.values() if t.result), key=lambda t: t.signal_ts)

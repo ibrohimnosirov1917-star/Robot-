@@ -293,6 +293,9 @@ async def handle_message(state: State, msg: dict) -> None:
     elif cmd.startswith("/jurnal"):
         data = state.journal.to_csv(s.display_tz, s.point_value)
         await tg.send_document(chat_id, data, "jurnal.csv", f"📒 Jurnal: {len(state.journal.trades)} ta signal")
+    elif cmd.startswith("/narx"):
+        await tg.send_message(chat_id, "⏳ Tradovate formasini sinayapman (bitim ochilmaydi)…")
+        await _run_or_spawn(state, _check_quote(state, chat_id))
     elif cmd.startswith("/eslatma"):
         from .reminders import parse
         items = parse(s.reminders)
@@ -304,6 +307,17 @@ async def handle_message(state: State, msg: dict) -> None:
                 f"• {t} — {d:%d.%m.%Y} ({(d - today).days} kun qoldi)" for d, t in sorted(items)))
     elif cmd.startswith("/flat"):
         await tg.send_message(chat_id, "⚠️ Barcha ochiq pozitsiya va buyurtmalarni yopaymi?", CONFIRM_KB)
+
+
+async def _check_quote(state: State, chat_id) -> None:
+    """Bitim ochmasdan buyurtma formasini sinash: kontraktni tanlab, narxni o'qiydi."""
+    price = await state.executor.quote(state.contract())
+    shot = await state.executor.screenshot()
+    if price is not None:
+        text = f"✅ Forma ishlayapti: {state.contract()} narxi <b>{fmt_price(price)}</b>. Bitim ochishga tayyor."
+    else:
+        text = "❌ Formadan narxni o'qib bo'lmadi — bitim ham ochilmaydi. Skrinshotni Claude'ga yuboring."
+    await send_result(state, chat_id, ExecutionResult(ok=price is not None, executed=False, text=text, screenshot=shot))
 
 
 async def _login(state: State, chat_id) -> None:
@@ -339,9 +353,13 @@ async def handle_exit(state: State, payload: dict) -> dict:
     except (KeyError, TypeError, ValueError) as e:
         raise HTTPException(400, f"noto'g'ri exit xabari: {e}")
     result = "TP" if str(payload.get("result", "")).upper() == "TP" else "SL"
-    trade = state.journal.find_open(side, entry)
+    dup = state.journal.find_closed_same(side, entry, exit_px)
+    if dup is not None and dup.extra.get("exit_notified"):
+        log.info("Exit %s takroriy xabar — e'tiborsiz (signal %s)", side, dup.id)
+        return {"ok": True, "id": dup.id, "result": dup.result, "duplicate": True}
+    trade = dup or state.journal.find_open(side, entry)
     manual = trade is not None and trade.result == "QO'LDA"
-    if trade is not None:
+    if trade is not None and dup is None:
         state.journal.record_exit(trade.id, result, exit_px)
         trade = state.journal.trades[trade.id]
 
@@ -390,6 +408,8 @@ async def handle_exit(state: State, payload: dict) -> dict:
             shot = await state.executor.screenshot()
             if shot:
                 await state.tg.send_photo(s.chat_id, shot, "📸 Tradovate holati")
+    if trade is not None:
+        trade.extra["exit_notified"] = True
     log.info("Exit %s %s %+.1fR (signal %s)", side, result, r, trade.id if trade else "?")
     return {"ok": True, "id": trade.id if trade else None, "result": result}
 
